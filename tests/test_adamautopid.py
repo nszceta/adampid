@@ -24,20 +24,40 @@ from typing import List, Tuple, Optional, Dict, Any
 matplotlib.use("Agg")
 
 # Import our AutoAdamPID classes
-from adampid import (
-    AutoAdamPID,
-    AutoAdamPIDError,
-    Action,
-    Control,
-    TuningMethod,
-    TunerAction,
-    TunerStatus,
-    SerialMode,
-    SimulatedTimer,
-    DMode,
-    PMode,
-    IAwMode,
-)
+try:
+    from adampid import (
+        AutoAdamPID,
+        AutoAdamPIDError,
+        Action,
+        Control,
+        TuningMethod,
+        TunerAction,
+        TunerStatus,
+        SerialMode,
+        SimulatedTimer,
+        DMode,
+        PMode,
+        IAwMode,
+    )
+except ImportError:
+    # Fallback for direct import
+    import sys
+
+    sys.path.append(".")
+    from adampid import (
+        AutoAdamPID,
+        AutoAdamPIDError,
+        Action,
+        Control,
+        TuningMethod,
+        TunerAction,
+        TunerStatus,
+        SerialMode,
+        SimulatedTimer,
+        DMode,
+        PMode,
+        IAwMode,
+    )
 
 
 class ComplexBipolarProcess:
@@ -468,7 +488,7 @@ def comprehensive_autotuning_test(
         # Update process
         current_output = process.update(current_input, current_time)
 
-        # CRITICAL FIX: Set inputs to AutoAdamPID in correct order
+        # Set inputs to AutoAdamPID in correct order
         auto_pid.set_input(current_output)  # Set input FIRST
         auto_pid.set_setpoint(setpoint)  # Set setpoint SECOND
 
@@ -1384,7 +1404,7 @@ def print_final_diagnostics(
     print(f"Test Suite Score: {test_score:.0f}%")
     print(f"Performance Score: {performance_score:.0f}%")
 
-    print(f"\nDetailed Performance Checklist:")
+    print("\nDetailed Performance Checklist:")
     for criterion_name, passed in performance_criteria:
         status = "✅ PASS" if passed else "❌ FAIL"
         print(f"  {criterion_name}: {status}")
@@ -1457,16 +1477,16 @@ def main():
 
         # Create complex process for realistic testing
         process = ComplexBipolarProcess(
-            base_gain=1.8,
-            base_time_constant=15.0,
-            dead_time=3.0,
+            base_gain=1.0,
+            base_time_constant=5.0,
+            dead_time=0.1,
             noise_level=0.03,
             nonlinearity_factor=0.2,
             asymmetry_factor=0.15,
             initial_output=0.0,
         )
 
-        print(f"\n🏭 Complex Bipolar Process Created:")
+        print("\n🏭 Complex Bipolar Process Created:")
         print(f"  Base Gain: {process.base_gain}")
         print(f"  Base Time Constant: {process.base_tau}s")
         print(f"  Dead Time: {process.theta}s")

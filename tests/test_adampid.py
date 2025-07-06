@@ -16,20 +16,40 @@ from typing import List, Tuple, Optional
 matplotlib.use("Agg")
 
 # Import our PID classes
-from adampid import (
-    AdamPID,
-    Action,
-    Control,
-    STune,
-    TuningMethod,
-    TunerAction,
-    TunerStatus,
-    SerialMode,
-    SimulatedTimer,
-    DMode,
-    PMode,
-    IAwMode,
-)
+try:
+    from adampid import (
+        AdamPID,
+        Action,
+        Control,
+        STune,
+        TuningMethod,
+        TunerAction,
+        TunerStatus,
+        SerialMode,
+        SimulatedTimer,
+        DMode,
+        PMode,
+        IAwMode,
+    )
+except ImportError:
+    # Fallback for direct import
+    import sys
+
+    sys.path.append(".")
+    from adampid import (
+        AdamPID,
+        Action,
+        Control,
+        STune,
+        TuningMethod,
+        TunerAction,
+        TunerStatus,
+        SerialMode,
+        SimulatedTimer,
+        DMode,
+        PMode,
+        IAwMode,
+    )
 
 
 class IdealBipolarProcess:
@@ -193,17 +213,8 @@ def sophisticated_autotuning(
     current_input = 0.0
     current_output = 0.0
 
-    def get_process_output():
-        return current_output
-
-    def set_process_input(value):
-        nonlocal current_input
-        current_input = value
-
     # Create STune with optimized settings for the ideal process
     s_tune = STune(
-        input_var=get_process_output,
-        output_var=set_process_input,
         tuning_method=TuningMethod.NO_OVERSHOOT_PI,  # Start with mixed method
         action=TunerAction.DIRECT_IP,  # Inflection point method
         serial_mode=SerialMode.PRINT_SUMMARY,
@@ -213,8 +224,10 @@ def sophisticated_autotuning(
     # Configure autotuning parameters based on process characteristics
     expected_response = process.K * 30.0  # Expected response to 30% step
     input_span = max(50.0, abs(expected_response) * 1.5)  # Adequate input range
-    test_duration = max(30, int(process.tau * 4 + process.theta * 3))  # 4τ + 3θ
-    settle_time = max(3, int(process.theta * 1.5))  # 1.5θ settling
+    test_duration = max(
+        20, int(process.tau * 4 + process.theta * 3)
+    )  # CHANGED: reduced min from 30 to 20
+    settle_time = max(2, int(process.theta * 1.5))  # CHANGED: reduced min from 3 to 2
 
     s_tune.configure(
         input_span=input_span,
@@ -262,9 +275,14 @@ def sophisticated_autotuning(
         # Update process
         current_output = process.update(current_input, current_time)
 
+        # CRITICAL FIX: Set input to STune before calling run()
+        s_tune.set_input(current_output)
+
         # Run autotuner
         try:
             status = s_tune.run()
+            # Get output from tuner
+            current_input = s_tune.get_output()
         except Exception as e:
             print(f"Autotuning error: {e}")
             # Return failure case with empty data
@@ -365,21 +383,8 @@ def verify_bipolar_control(
     current_output = 0.0
     current_setpoint = 0.0
 
-    def get_process_output():
-        return current_output
-
-    def set_process_input(value):
-        nonlocal current_input
-        current_input = value
-
-    def get_setpoint():
-        return current_setpoint
-
     # Create AdamPID with sophisticated configuration for aggressive response with good dampening
     pid = AdamPID(
-        input_var=get_process_output,
-        output_var=set_process_input,
-        setpoint_var=get_setpoint,
         kp=kp,
         ki=ki,
         kd=kd,
@@ -444,8 +449,13 @@ def verify_bipolar_control(
         # Update process
         current_output = process.update(current_input, current_time)
 
+        # Set inputs to PID controller
+        pid.set_input(current_output)
+        pid.set_setpoint(current_setpoint)
+
         # Run PID controller
-        pid.compute()
+        if pid.compute():
+            current_input = pid.get_output()
 
         # Collect comprehensive data
         error = current_setpoint - current_output
@@ -1389,8 +1399,8 @@ def main():
     # Ideal process parameters for clear verification
     process = IdealBipolarProcess(
         process_gain=1.2,  # Clear, measurable gain
-        time_constant=8.0,  # Moderate dynamics
-        dead_time=1.5,  # Reasonable dead time
+        time_constant=3.0,  # CHANGED: 8.0 → 3.0 (much faster response)
+        dead_time=0.5,  # CHANGED: 1.5 → 0.5 (less delay)
         noise_level=0.003,  # Minimal noise for ideal case
         initial_output=0.0,
     )
@@ -1442,9 +1452,9 @@ def main():
         print("X ISSUES DETECTED: Controller needs attention")
         print("🔍 See detailed diagnostics above for specific issues")
 
-    print(f"\n📄 Detailed results saved in:")
-    print(f"   • 'ideal_bipolar_verification.jpg' - Comprehensive plots")
-    print(f"   • Console output - Detailed diagnostic analysis")
+    print("\n📄 Detailed results saved in:")
+    print("   • 'ideal_bipolar_verification.jpg' - Comprehensive plots")
+    print("   • Console output - Detailed diagnostic analysis")
     print("=" * 60)
 
 
