@@ -197,3 +197,4 @@ cython_debug/
 *.db
 *.yaml
 !*.template.yaml
+*.jpg

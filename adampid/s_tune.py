@@ -63,14 +63,14 @@ class TuningMethod(IntEnum):
 class STune:
     """
     Inflection Point Autotuner with instance method interface.
-    
+
     This autotuner uses instance methods for input/output operations, allowing
     the application to control timing and data flow.
-    
+
     Usage pattern:
         tuner = STune(tuning_method=TuningMethod.COHEN_COON_PID)
         tuner.configure(input_span=100, output_span=100, ...)
-        
+
         # In control loop:
         tuner.set_input(sensor_reading)
         status = tuner.run()
@@ -187,7 +187,7 @@ class STune:
     def set_input(self, input_value: float) -> None:
         """
         Set the current process variable (sensor reading).
-        
+
         Args:
             input_value: Current measured process variable
         """
@@ -197,7 +197,7 @@ class STune:
     def get_output(self) -> float:
         """
         Get the current controller output that should be applied.
-        
+
         Returns:
             Current output value for the actuator
         """
@@ -276,8 +276,12 @@ class STune:
         Raises:
             TuningError: If tuning fails or emergency stop is triggered
         """
+        # CRITICAL FIX: Better error message and validation
         if not self._input_valid:
-            raise TuningError("Input value must be set before calling run()")
+            raise TuningError(
+                f"Input value must be set before calling run(). "
+                f"Call set_input() first. Current input valid: {self._input_valid}"
+            )
 
         # Update internal process variable from current input
         self.pv_inst = self._current_input

@@ -59,11 +59,11 @@ class AdamPID:
 
     This controller uses instance methods for input/output operations rather than
     callable functions, giving the application full control over timing and data flow.
-    
+
     Usage pattern:
         pid = AdamPID(kp=1.0, ki=0.1, kd=0.01)
         pid.set_mode(Control.AUTOMATIC)
-        
+
         # In control loop:
         pid.set_input(sensor_reading)
         pid.set_setpoint(desired_value)
@@ -133,7 +133,7 @@ class AdamPID:
 
         # Store timer implementation
         self.timer = timer or RealTimeTimer()
-        
+
         # Initialize timing with dependency-injected timer
         self._sample_time_us: int = 100_000
         self._last_time: float = self.timer.get_time_us() - self._sample_time_us
@@ -157,7 +157,7 @@ class AdamPID:
     def set_input(self, input_value: float) -> None:
         """
         Set the current process variable (sensor reading).
-        
+
         Args:
             input_value: Current measured process variable
         """
@@ -167,7 +167,7 @@ class AdamPID:
     def set_setpoint(self, setpoint_value: float) -> None:
         """
         Set the current setpoint (desired value).
-        
+
         Args:
             setpoint_value: Desired process variable value
         """
@@ -177,7 +177,7 @@ class AdamPID:
     def get_output(self) -> float:
         """
         Get the current controller output.
-        
+
         Returns:
             Current PID controller output value
         """
@@ -200,7 +200,9 @@ class AdamPID:
             return False
 
         if not self._input_valid or not self._setpoint_valid:
-            raise RuntimeError("Input and setpoint must be set before calling compute()")
+            raise RuntimeError(
+                "Input and setpoint must be set before calling compute()"
+            )
 
         now = self.timer.get_time_us()
         time_change = now - self._last_time

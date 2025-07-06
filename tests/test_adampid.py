@@ -387,7 +387,7 @@ def verify_bipolar_control(
         timer=timer,
         p_mode=PMode.P_ON_ERROR,  # Full proportional response to setpoint changes
         d_mode=DMode.D_ON_MEAS,  # Reduce derivative kick
-        i_aw_mode=IAwMode.I_AW_OFF# I_AW_CONDITION,  # Smart anti-windup
+        i_aw_mode=IAwMode.I_AW_OFF,  # I_AW_CONDITION,  # Smart anti-windup
     )
 
     # Set symmetric bipolar limits
@@ -496,16 +496,24 @@ def analyze_control_performance(
     # Error criteria as percentage of setpoint activity
     max_error_threshold = (
         setpoint_range * 0.5  # Max error should be < 50% of total range (was 25%)
-    )  
-    rms_error_threshold = typical_setpoint_change * 0.35  # RMS < 35% of typical change (was 15%)
+    )
+    rms_error_threshold = (
+        typical_setpoint_change * 0.35
+    )  # RMS < 35% of typical change (was 15%)
 
-    if hasattr(process, 'tau') and hasattr(process, 'theta'):
+    if hasattr(process, "tau") and hasattr(process, "theta"):
         # For processes with long time constants, allow more error
         tau_factor = min(2.0, process.tau / 5.0)  # Scale factor based on process speed
-        dead_time_factor = 1.0 + (process.theta / process.tau)  # More error allowed for dead time
-        
-        max_error_threshold = setpoint_range * (0.3 + 0.1 * tau_factor) * dead_time_factor
-        rms_error_threshold = typical_setpoint_change * (0.2 + 0.05 * tau_factor) * dead_time_factor
+        dead_time_factor = 1.0 + (
+            process.theta / process.tau
+        )  # More error allowed for dead time
+
+        max_error_threshold = (
+            setpoint_range * (0.3 + 0.1 * tau_factor) * dead_time_factor
+        )
+        rms_error_threshold = (
+            typical_setpoint_change * (0.2 + 0.05 * tau_factor) * dead_time_factor
+        )
 
     print(f"\nDynamic Performance Criteria:")
     print(f"  Setpoint range: {setpoint_range:.1f}")
@@ -558,8 +566,12 @@ def analyze_control_performance(
 
     # More realistic saturation threshold - aggressive control is OK for setpoint tracking
     base_saturation_threshold = 0.25  # Allow 25% saturation (was 15%)
-    setpoint_aggressiveness = typical_setpoint_change / setpoint_range if setpoint_range > 0 else 0.5
-    saturation_threshold = base_saturation_threshold + (setpoint_aggressiveness * 0.15)  # More saturation OK for aggressive setpoints
+    setpoint_aggressiveness = (
+        typical_setpoint_change / setpoint_range if setpoint_range > 0 else 0.5
+    )
+    saturation_threshold = base_saturation_threshold + (
+        setpoint_aggressiveness * 0.15
+    )  # More saturation OK for aggressive setpoints
 
     print(f"\nSaturation Analysis:")
     print(f"  Positive saturation: {pos_sat_count / total_samples * 100:.2f}%")
@@ -569,22 +581,21 @@ def analyze_control_performance(
         f"  Actual saturation: {(pos_sat_count + neg_sat_count) / total_samples * 100:.1f}%"
     )
 
-
-    if hasattr(process, 'tau') and hasattr(process, 'theta'):
+    if hasattr(process, "tau") and hasattr(process, "theta"):
         # Controllability factor - harder processes get more lenient criteria
         controllability = process.tau / process.theta if process.theta > 0 else 10
-        
+
         if controllability > 10:  # Easy to control
             performance_multiplier = 1.0
         elif controllability > 4:  # Moderate
             performance_multiplier = 1.3
         else:  # Difficult
             performance_multiplier = 1.8
-        
+
         # Apply multipliers to thresholds
         max_error_threshold *= performance_multiplier
         rms_error_threshold *= performance_multiplier
-        
+
         print(f"\nProcess-Aware Criteria Applied:")
         print(f"  Controllability: {controllability:.1f}")
         print(f"  Performance Multiplier: {performance_multiplier:.1f}")
@@ -639,7 +650,9 @@ def analyze_control_performance(
     else:
         avg_settling_time = 0
 
-    expected_settling = 2.5 * process.tau + 3 * process.theta  # More realistic expectation
+    expected_settling = (
+        2.5 * process.tau + 3 * process.theta
+    )  # More realistic expectation
 
     settling_performance = (
         avg_settling_time / expected_settling
@@ -692,7 +705,7 @@ def analyze_control_performance(
     saturation_ok = (
         pos_sat_count + neg_sat_count
     ) / total_samples < saturation_threshold
-    
+
     # Define acceptable settling performance
     settling_ok = settling_performance < 2.5  # More lenient (was 1.5)
 
@@ -707,13 +720,23 @@ def analyze_control_performance(
     max_score = 6
 
     performance_score += 1 if control_ok else 0
-    performance_score += 1 if performance_ok else 0.5 if rms_error < rms_error_threshold * 1.5 else 0  # Partial credit
+    performance_score += (
+        1 if performance_ok else 0.5 if rms_error < rms_error_threshold * 1.5 else 0
+    )  # Partial credit
     performance_score += 1 if stability_ok else 0
-    performance_score += 1 if saturation_ok else 0.5 if (pos_sat_count + neg_sat_count) / total_samples < saturation_threshold * 1.5 else 0
+    performance_score += (
+        1
+        if saturation_ok
+        else 0.5
+        if (pos_sat_count + neg_sat_count) / total_samples < saturation_threshold * 1.5
+        else 0
+    )
     performance_score += 1 if settling_ok else 0.5 if settling_performance < 3.0 else 0
     performance_score += 1  # Bonus point for completing the test
 
-    overall_pass = performance_score >= max_score * 0.75  # 75% score required (was 100%)
+    overall_pass = (
+        performance_score >= max_score * 0.75
+    )  # 75% score required (was 100%)
     overall_score = performance_score / max_score
 
     print(
