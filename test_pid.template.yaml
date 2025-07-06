@@ -1,0 +1,29 @@
+auto_tune:
+  action: DIRECT_IP
+  convergence_tolerance: 0.01
+  emergency_stop: 90.0
+  enabled: true
+  input_span: 100.0
+  max_duration_sec: 120
+  output_span: 200.0
+  output_start: 0.0
+  output_step: 30.0
+  samples: 600
+  settle_time_sec: 10
+  test_time_sec: 60
+  tuning_method: COHEN_COON_PID
+logging:
+  database_path: pid_data.db
+  interval_sec: 1.0
+pid:
+  action: DIRECT
+  d_mode: D_ON_MEAS
+  i_aw_mode: I_AW_CONDITION
+  kd: 0.0
+  ki: 0.0
+  kp: 0.0
+  output_limits:
+    max: 100.0
+    min: -100.0
+  p_mode: P_ON_ERROR
+  sample_time_us: 100000

@@ -1,17 +1,12 @@
 """
-STune - Inflection Point Autotuner
+STune - Inflection Point Autotuner (Instance Method Version)
 
-This module implements an advanced PID autotuner using a novel s-curve inflection
-point test method. The tuner can determine optimal PID parameters in approximately
-½τ (half time constant) on first-order systems with time delay.
-
-The algorithm applies a step change to the process output and analyzes the response
-curve to identify the inflection point, from which it calculates process characteristics
-and derives PID tuning parameters using various established methods.
+This module implements an advanced PID autotuner using instance methods for
+input/output operations rather than callable functions.
 """
 
 from enum import IntEnum
-from typing import Optional, Tuple, Callable
+from typing import Optional, Tuple
 
 from .s_tan import STan
 from .timing_base import TimerBase
@@ -67,20 +62,23 @@ class TuningMethod(IntEnum):
 
 class STune:
     """
-    Inflection Point Autotuner for PID controllers.
-
-    This class implements an advanced autotuning algorithm that can determine
-    optimal PID parameters by analyzing the inflection point of a process
-    step response. The method is faster than traditional relay-based tuning
-    and works well on first-order plus dead time (FOPDT) processes.
-
-    The tuner applies a step change to the process output and monitors the
-    input response, looking for the inflection point where the rate of change
-    is maximum. From this analysis, it calculates:
-    - Process gain (Ku)
-    - Dead time (td)
-    - Time constant (Tu)
-    - PID parameters using various tuning rules
+    Inflection Point Autotuner with instance method interface.
+    
+    This autotuner uses instance methods for input/output operations, allowing
+    the application to control timing and data flow.
+    
+    Usage pattern:
+        tuner = STune(tuning_method=TuningMethod.COHEN_COON_PID)
+        tuner.configure(input_span=100, output_span=100, ...)
+        
+        # In control loop:
+        tuner.set_input(sensor_reading)
+        status = tuner.run()
+        if status in [TunerStatus.TEST, TunerStatus.SAMPLE]:
+            actuator_output = tuner.get_output()
+            apply_output_to_actuator(actuator_output)
+        elif status == TunerStatus.TUNINGS:
+            kp, ki, kd = tuner.get_auto_tunings()
     """
 
     # Mathematical constants used in calculations
@@ -89,8 +87,6 @@ class STune:
 
     def __init__(
         self,
-        input_var: Optional[Callable[[], float]] = None,
-        output_var: Optional[Callable[[float], None]] = None,
         tuning_method: TuningMethod = TuningMethod.ZN_PID,
         action: TunerAction = TunerAction.DIRECT_IP,
         serial_mode: SerialMode = SerialMode.PRINT_OFF,
@@ -100,18 +96,18 @@ class STune:
         Initialize the STune autotuner.
 
         Args:
-            input_var: Function that returns current process variable (sensor reading)
-            output_var: Function that sets the control output value
             tuning_method: Method to use for calculating PID parameters
             action: Control action and test method
             serial_mode: Verbosity level for debugging output
+            timer: Timer implementation for timing control
         """
         # Store timer implementation
         self.timer = timer or RealTimeTimer()
 
-        # External connections
-        self._input_var = input_var
-        self._output_var = output_var
+        # Current process values (set/retrieved by application)
+        self._current_input: float = 0.0
+        self._current_output: float = 0.0
+        self._input_valid: bool = False
 
         # Configuration
         self._action = action
@@ -188,6 +184,25 @@ class STune:
         if hasattr(self._tangent, "__exit__"):
             self._tangent.__exit__(exc_type, exc_val, exc_tb)
 
+    def set_input(self, input_value: float) -> None:
+        """
+        Set the current process variable (sensor reading).
+        
+        Args:
+            input_value: Current measured process variable
+        """
+        self._current_input = input_value
+        self._input_valid = True
+
+    def get_output(self) -> float:
+        """
+        Get the current controller output that should be applied.
+        
+        Returns:
+            Current output value for the actuator
+        """
+        return self._current_output
+
     def configure(
         self,
         input_span: float,
@@ -198,21 +213,7 @@ class STune:
         settle_time_sec: int,
         samples: int,
     ) -> None:
-        """
-        Configure the autotuning test parameters.
-
-        Args:
-            input_span: Full scale range of the input variable
-            output_span: Full scale range of the output variable
-            output_start: Initial output value before step test
-            output_step: Step change in output for test
-            test_time_sec: Maximum test duration in seconds
-            settle_time_sec: Settling time before starting test
-            samples: Number of samples to collect during test
-
-        Raises:
-            ConfigurationError: If parameters are invalid
-        """
+        """Configure the autotuning test parameters."""
         # Validate parameters
         if input_span <= 0:
             raise ConfigurationError("Input span must be positive")
@@ -253,6 +254,9 @@ class STune:
         # Initialize sliding tangent buffer
         self._tangent.begin(self._buffer_size)
 
+        # Set initial output
+        self._current_output = self._output_start
+
         if self._serial_mode != SerialMode.PRINT_OFF:
             print(
                 f"STune configured: {samples} samples over {test_time_sec}s, "
@@ -263,9 +267,8 @@ class STune:
         """
         Execute one iteration of the autotuning state machine.
 
-        This method should be called repeatedly (typically in a loop) until
-        tuning is complete. The method returns the current state, allowing
-        the caller to determine when tuning is finished.
+        This method should be called repeatedly after setting the input value.
+        It returns the current state and updates the output value internally.
 
         Returns:
             Current tuner status
@@ -273,8 +276,11 @@ class STune:
         Raises:
             TuningError: If tuning fails or emergency stop is triggered
         """
-        if self._input_var is None or self._output_var is None:
-            raise TuningError("Input and output variables must be set before running")
+        if not self._input_valid:
+            raise TuningError("Input value must be set before calling run()")
+
+        # Update internal process variable from current input
+        self.pv_inst = self._current_input
 
         us_now = self.timer.get_time_us()
         us_elapsed = us_now - self.us_prev
@@ -321,7 +327,7 @@ class STune:
         if settle_elapsed >= self._settle_period_us:
             # Apply step change when sample_count == 1 (after first sample post-settling)
             if self.sample_count == 1:
-                self._output_var(self._output_step)
+                self._current_output = self._output_step
                 if self._serial_mode != SerialMode.PRINT_OFF:
                     print(f"Applying step change: {self._output_step}")
 
@@ -353,9 +359,8 @@ class STune:
         else:
             # Still settling - maintain initial output and take samples for noise analysis
             if us_elapsed >= self._sample_period_us and not self.e_stop_abort:
-                self._output_var(self._output_start)
+                self._current_output = self._output_start
                 self.us_prev = us_now
-                self.pv_inst = self._input_var()
 
                 if self._serial_mode in [SerialMode.PRINT_ALL, SerialMode.PRINT_DEBUG]:
                     remaining_time = (self._settle_period_us - settle_elapsed) * 1e-6
@@ -375,7 +380,6 @@ class STune:
         # Get current measurements and resolutions
         last_pv_inst = self.pv_inst
         last_pv_avg = self.pv_avg
-        self.pv_inst = self._input_var()
         self.pv_avg = self._tangent.avg_val(self.pv_inst)
 
         # Track resolution for noise analysis
@@ -535,9 +539,8 @@ class STune:
     def reset(self) -> None:
         """Reset the tuner to initial state."""
         self._tuner_status = TunerStatus.TEST
-
-        if self._output_var:
-            self._output_var(self._output_start)
+        self._current_output = self._output_start
+        self._input_valid = False
 
         self.us_prev = self.timer.get_time_us()
         self.settle_prev = self.us_prev
@@ -560,12 +563,12 @@ class STune:
         self.pv_tangent = 0.0
         self.pv_tangent_prev = 0.0
 
-        if self._input_var:
-            self.pv_inst = self._input_var()
+        if self._input_valid:
+            self.pv_inst = self._current_input
             self.pv_avg = self.pv_inst
             self.pv_start = self.pv_inst
             self.pv_inst_res = self.pv_inst
-            self.pv_avg_res = self.pv_inst  # Add this line
+            self.pv_avg_res = self.pv_inst
 
         # Reset counters - sample_count starts at 0 during settling
         self.ip_count = 0
@@ -591,14 +594,7 @@ class STune:
         """Set PID calculation method."""
         self._tuning_method = tuning_method
 
-    def set_input_output(
-        self, input_var: Callable[[], float], output_var: Callable[[float], None]
-    ) -> None:
-        """Set input and output variable functions."""
-        self._input_var = input_var
-        self._output_var = output_var
-
-    # Getters for PID parameters
+    # Getter methods (unchanged from original)
     def get_kp(self) -> float:
         """Calculate and return proportional gain based on selected method."""
         if self._tu == 0 or self._td == 0 or self._ku == 0:
@@ -728,7 +724,19 @@ class STune:
         """Get all PID tunings as tuple (Kp, Ki, Kd)."""
         return (self._kp, self._ki, self._kd)
 
-    # Utility methods for debugging and visualization
+    def get_current_input(self) -> float:
+        """Get the current input value."""
+        return self._current_input
+
+    def is_input_valid(self) -> bool:
+        """Check if input has been set."""
+        return self._input_valid
+
+    def is_tuning_complete(self) -> bool:
+        """Check if autotuning has completed."""
+        return self._tuner_status == TunerStatus.TUNINGS
+
+    # Debug methods (implementations unchanged from original)
     def print_tunings(self) -> None:
         """Print current tuning method and parameters."""
         method_names = {
@@ -835,10 +843,7 @@ class STune:
             SerialMode.PRINT_DEBUG,
         ]:
             print(f" sec: {self.us * 1e-6:.4f}", end="")
-            print(
-                f"  out: {self._output_var.__name__ if hasattr(self._output_var, '__name__') else 'output'}",
-                end="",
-            )
+            print(f"  out: {self._current_output}", end="")
             print(f"  pv: {self.pv_inst:.3f}", end="")
 
             if self._serial_mode == SerialMode.PRINT_DEBUG and self._action in [
@@ -868,29 +873,3 @@ class STune:
                 print(" ↘")
             else:
                 print(" →")
-
-    def plot_pid_tuner(self, every_nth: int = 1) -> None:
-        """Print CSV data for plotting (time, output, process variable)."""
-        if self.sample_count < self._samples:
-            if self.plot_count == 0 or self.plot_count >= every_nth:
-                self.plot_count = 1
-                print(f"{self.us * 1e-6:.4f}, {self._output_step}, {self.pv_avg}")
-            else:
-                self.plot_count += 1
-
-    def plotter(
-        self,
-        input_val: float,
-        output_val: float,
-        setpoint: float,
-        output_scale: float = 1.0,
-        every_nth: int = 1,
-    ) -> None:
-        """Print plotter-formatted data for visualization."""
-        if self.plot_count >= every_nth:
-            self.plot_count = 1
-            print(
-                f"Setpoint:{setpoint}, Input:{input_val}, Output:{output_val * output_scale},"
-            )
-        else:
-            self.plot_count += 1

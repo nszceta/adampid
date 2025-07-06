@@ -1,17 +1,13 @@
 """
-AdamPID - Advanced PID Controller
+AdamPID - Advanced PID Controller (Instance Method Version)
 
-This module provides a comprehensive PID controller implementation with advanced
-features including multiple calculation modes, anti-windup protection, and
-flexible configuration options. It maintains compatibility with the Arduino
-PID library while adding enhanced functionality.
-
-The controller supports various proportional and derivative calculation methods,
-multiple anti-windup strategies, and automatic/manual/timer operation modes.
+This module provides a comprehensive PID controller implementation that uses
+instance methods for input/output instead of callable functions. The application
+controls when values are provided and retrieved.
 """
 
 from enum import IntEnum
-from typing import Optional, Callable
+from typing import Optional
 
 from .timing_base import TimerBase
 from .real_time_timer import RealTimeTimer
@@ -59,26 +55,25 @@ class IAwMode(IntEnum):
 
 class AdamPID:
     """
-    Advanced PID Controller with multiple calculation modes and anti-windup.
+    Advanced PID Controller with instance method interface.
 
-    This controller provides sophisticated PID control with configurable
-    calculation methods for proportional and derivative terms, multiple
-    anti-windup strategies, and flexible operation modes.
-
-    Key features:
-    - Multiple proportional calculation modes (on error, measurement, or both)
-    - Derivative calculation on error or measurement to reduce derivative kick
-    - Advanced anti-windup protection with multiple strategies
-    - Automatic, manual, and timer-based operation modes
-    - Bumpless transfer between manual and automatic modes
-    - Configurable output limits and sample timing
+    This controller uses instance methods for input/output operations rather than
+    callable functions, giving the application full control over timing and data flow.
+    
+    Usage pattern:
+        pid = AdamPID(kp=1.0, ki=0.1, kd=0.01)
+        pid.set_mode(Control.AUTOMATIC)
+        
+        # In control loop:
+        pid.set_input(sensor_reading)
+        pid.set_setpoint(desired_value)
+        if pid.compute():
+            output = pid.get_output()
+            apply_output_to_actuator(output)
     """
 
     def __init__(
         self,
-        input_var: Optional[Callable[[], float]] = None,
-        output_var: Optional[Callable[[float], None]] = None,
-        setpoint_var: Optional[Callable[[], float]] = None,
         kp: float = 0.0,
         ki: float = 0.0,
         kd: float = 0.0,
@@ -92,9 +87,6 @@ class AdamPID:
         Initialize the AdamPID controller.
 
         Args:
-            input_var: Function that returns current process variable
-            output_var: Function that sets the control output
-            setpoint_var: Function that returns current setpoint
             kp: Proportional gain
             ki: Integral gain
             kd: Derivative gain
@@ -102,11 +94,14 @@ class AdamPID:
             d_mode: Derivative calculation mode
             i_aw_mode: Integral anti-windup mode
             action: Controller action (direct or reverse)
+            timer: Timer implementation for timing control
         """
-        # External variable connections
-        self._input_var = input_var
-        self._output_var = output_var
-        self._setpoint_var = setpoint_var
+        # Current process values (set by application)
+        self._current_input: float = 0.0
+        self._current_setpoint: float = 0.0
+        self._current_output: float = 0.0
+        self._input_valid: bool = False
+        self._setpoint_valid: bool = False
 
         # Controller mode and configuration
         self._mode = Control.MANUAL
@@ -159,25 +154,53 @@ class AdamPID:
         """Context manager exit with cleanup."""
         self.reset()
 
+    def set_input(self, input_value: float) -> None:
+        """
+        Set the current process variable (sensor reading).
+        
+        Args:
+            input_value: Current measured process variable
+        """
+        self._current_input = input_value
+        self._input_valid = True
+
+    def set_setpoint(self, setpoint_value: float) -> None:
+        """
+        Set the current setpoint (desired value).
+        
+        Args:
+            setpoint_value: Desired process variable value
+        """
+        self._current_setpoint = setpoint_value
+        self._setpoint_valid = True
+
+    def get_output(self) -> float:
+        """
+        Get the current controller output.
+        
+        Returns:
+            Current PID controller output value
+        """
+        return self._current_output
+
     def compute(self) -> bool:
         """
         Perform PID calculation if it's time for a new computation.
 
-        This is the main PID calculation method that should be called regularly
-        (typically every loop iteration). It automatically handles timing and
-        only performs calculations when necessary based on the sample time.
+        This method should be called regularly after setting input and setpoint.
+        It will only perform calculations when necessary based on timing and mode.
 
         Returns:
             True if calculation was performed, False if not time yet
 
         Raises:
-            RuntimeError: If input/output variables are not set
+            RuntimeError: If input/setpoint values haven't been set
         """
         if self._mode == Control.MANUAL:
             return False
 
-        if not all([self._input_var, self._output_var, self._setpoint_var]):
-            raise RuntimeError("Input, output, and setpoint variables must be set")
+        if not self._input_valid or not self._setpoint_valid:
+            raise RuntimeError("Input and setpoint must be set before calling compute()")
 
         now = self.timer.get_time_us()
         time_change = now - self._last_time
@@ -190,14 +213,9 @@ class AdamPID:
 
     def _perform_calculation(self, now: float) -> bool:
         """Perform the actual PID calculation."""
-        # Validate initialization
-        assert self._input_var is not None
-        assert self._setpoint_var is not None
-        assert self._output_var is not None
-
-        # Get current values
-        input_val = self._input_var()
-        setpoint = self._setpoint_var()
+        # Get current values from internal state
+        input_val = self._current_input
+        setpoint = self._current_setpoint
 
         # Calculate input change (for derivative and proportional on measurement)
         d_input = input_val - self._last_input
@@ -255,8 +273,8 @@ class AdamPID:
         output = self.output_sum + p_error_term + self._d_term
         output = self._constrain(output, self._out_min, self._out_max)
 
-        # Set output
-        self._output_var(output)
+        # Store output internally
+        self._current_output = output
 
         # Update state for next iteration
         self._last_error = self._error
@@ -268,13 +286,7 @@ class AdamPID:
     def _apply_conditional_anti_windup(
         self, p_error_term: float, p_meas_term: float, d_error: float
     ) -> None:
-        """
-        Apply conditional anti-windup protection.
-
-        This method prevents integral windup by checking if the output would
-        saturate and the error is driving in the same direction. If so, it
-        clamps the integral term to prevent further windup.
-        """
+        """Apply conditional anti-windup protection."""
         aw = False
         i_term_out = (p_error_term - p_meas_term) + self._ki * (
             self._i_term + self._error
@@ -338,19 +350,7 @@ class AdamPID:
         self._kd = kd / sample_time_sec
 
     def set_sample_time_us(self, new_sample_time_us: int) -> None:
-        """
-        Set the sample time in microseconds.
-
-        The sample time determines how often the PID calculation is performed.
-        Changing the sample time automatically rescales the integral and
-        derivative terms to maintain the same control behavior.
-
-        Args:
-            new_sample_time_us: New sample time in microseconds
-
-        Raises:
-            ConfigurationError: If sample time is not positive
-        """
+        """Set the sample time in microseconds."""
         if new_sample_time_us <= 0:
             raise ConfigurationError("Sample time must be positive")
 
@@ -364,16 +364,7 @@ class AdamPID:
         self._sample_time_us = new_sample_time_us
 
     def set_output_limits(self, min_output: float, max_output: float) -> None:
-        """
-        Set the output limits for the PID controller.
-
-        Args:
-            min_output: Minimum output value
-            max_output: Maximum output value
-
-        Raises:
-            ConfigurationError: If min >= max
-        """
+        """Set the output limits for the PID controller."""
         if min_output >= max_output:
             raise ConfigurationError("Minimum output must be less than maximum")
 
@@ -381,23 +372,14 @@ class AdamPID:
         self._out_max = max_output
 
         # Constrain current output and sum if in automatic mode
-        if self._mode != Control.MANUAL and self._output_var:
-            current_output = self._get_current_output()
-            if current_output is not None:
-                constrained_output = self._constrain(
-                    current_output, min_output, max_output
-                )
-                self._output_var(constrained_output)
-
+        if self._mode != Control.MANUAL:
+            self._current_output = self._constrain(
+                self._current_output, min_output, max_output
+            )
             self.output_sum = self._constrain(self.output_sum, min_output, max_output)
 
     def set_mode(self, mode: Control) -> None:
-        """
-        Set the controller operation mode.
-
-        Args:
-            mode: New operation mode
-        """
+        """Set the controller operation mode."""
         # Handle transition from manual to automatic/timer
         if self._mode == Control.MANUAL and mode != Control.MANUAL:
             self.initialize()
@@ -430,35 +412,15 @@ class AdamPID:
         """Set the integral sum value directly."""
         self.output_sum = sum_value
 
-    def set_input_output_setpoint(
-        self,
-        input_var: Callable[[], float],
-        output_var: Callable[[float], None],
-        setpoint_var: Callable[[], float],
-    ) -> None:
-        """Set input, output, and setpoint variable functions."""
-        self._input_var = input_var
-        self._output_var = output_var
-        self._setpoint_var = setpoint_var
-
     def initialize(self) -> None:
-        """
-        Initialize the controller for bumpless transfer from manual to automatic.
+        """Initialize the controller for bumpless transfer from manual to automatic."""
+        if self._input_valid:
+            self._last_input = self._current_input
 
-        This method should be called when switching from manual to automatic mode
-        to prevent output bumps. It initializes the integral sum and last input
-        to current values.
-        """
-        if self._input_var:
-            self._last_input = self._input_var()
-
-        current_output = self._get_current_output()
-        if current_output is not None:
-            self.output_sum = self._constrain(
-                current_output, self._out_min, self._out_max
-            )
-        else:
-            self.output_sum = 0.0
+        # Initialize output sum to current output for bumpless transfer
+        self.output_sum = self._constrain(
+            self._current_output, self._out_min, self._out_max
+        )
 
     def reset(self) -> None:
         """Reset all internal state variables to zero."""
@@ -470,12 +432,9 @@ class AdamPID:
         self._d_term = 0.0
         self._error = 0.0
         self._last_error = 0.0
-
-    def _get_current_output(self) -> Optional[float]:
-        """Get current output value if available."""
-        # Since we can't read back from a function, return None
-        # In practice, the user would need to maintain this separately
-        return None
+        self._current_output = 0.0
+        self._input_valid = False
+        self._setpoint_valid = False
 
     def _constrain(self, value: float, min_val: float, max_val: float) -> float:
         """Constrain a value between min and max."""
@@ -537,6 +496,26 @@ class AdamPID:
     def get_output_limits(self) -> tuple[float, float]:
         """Get output limits as (min, max) tuple."""
         return (self._out_min, self._out_max)
+
+    def get_current_input(self) -> float:
+        """Get the current input value."""
+        return self._current_input
+
+    def get_current_setpoint(self) -> float:
+        """Get the current setpoint value."""
+        return self._current_setpoint
+
+    def get_current_error(self) -> float:
+        """Get the current error value."""
+        return self._error
+
+    def is_input_valid(self) -> bool:
+        """Check if input has been set."""
+        return self._input_valid
+
+    def is_setpoint_valid(self) -> bool:
+        """Check if setpoint has been set."""
+        return self._setpoint_valid
 
     def __repr__(self) -> str:
         """String representation for debugging."""
