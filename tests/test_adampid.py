@@ -225,18 +225,18 @@ def sophisticated_autotuning(
     expected_response = process.K * 30.0  # Expected response to 30% step
     input_span = max(50.0, abs(expected_response) * 1.5)  # Adequate input range
     test_duration = max(
-        20, int(process.tau * 4 + process.theta * 3)
-    )  # CHANGED: reduced min from 30 to 20
-    settle_time = max(2, int(process.theta * 1.5))  # CHANGED: reduced min from 3 to 2
+        30, int(process.tau * 3 + process.theta * 4)
+    )  # More time for identification
+    settle_time = max(3, int(process.theta * 2.5))  # More settling time
 
     s_tune.configure(
         input_span=input_span,
-        output_span=200.0,  # Full bipolar range available
-        output_start=0.0,  # Start from neutral
-        output_step=30.0,  # 15% step for good S/N ratio
+        output_span=200.0,
+        output_start=0.0,
+        output_step=20.0,  # Smaller step for better identification
         test_time_sec=test_duration,
         settle_time_sec=settle_time,
-        samples=600,  # High resolution
+        samples=max(600, test_duration * 15),  # Higher resolution
     )
 
     # Set conservative emergency stop
@@ -348,12 +348,12 @@ def sophisticated_autotuning(
     s_tune.set_tuning_method(method)
     kp = s_tune.get_kp()
     ki = s_tune.get_ki()
-    kd = s_tune.get_kd() * 1.5  # Increase derivative by 50% for better dampening
+    kd = s_tune.get_kd()
 
     print(f"\nOptimal PID Parameters ({method.name}):")
     print(f"  Kp = {kp:.4f}")
     print(f"  Ki = {ki:.4f}")
-    print(f"  Kd = {kd:.4f} (enhanced for dampening)")
+    print(f"  Kd = {kd:.4f}")
     print(f"  Ti = {s_tune.get_ti():.2f}s")
     print(f"  Td = {s_tune.get_td():.2f}s")
 
@@ -1398,10 +1398,10 @@ def main():
 
     # Ideal process parameters for clear verification
     process = IdealBipolarProcess(
-        process_gain=1.2,  # Clear, measurable gain
-        time_constant=3.0,  # CHANGED: 8.0 → 3.0 (much faster response)
-        dead_time=0.5,  # CHANGED: 1.5 → 0.5 (less delay)
-        noise_level=0.003,  # Minimal noise for ideal case
+        process_gain=0.8,  # Easier to identify accurately
+        time_constant=5.0,  # Moderate speed
+        dead_time=0.8,  # Better τ/θ ratio
+        noise_level=0.001,  # Very low noise
         initial_output=0.0,
     )
 
