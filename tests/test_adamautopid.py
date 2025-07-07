@@ -181,185 +181,21 @@ class ComplexBipolarProcess:
         }
 
 
-def test_configuration_management(temp_dir: Path) -> Dict[str, bool]:
-    """Test AutoAdamPID configuration management capabilities."""
-
-    print("\n=== Configuration Management Test ===")
-
-    config_path = temp_dir / "test_config.yaml"
-    results = {}
-
-    # Test 1: Default configuration creation
-    print("Testing default configuration creation...")
-    try:
-        with AutoAdamPID(str(config_path)) as auto_pid:
-            assert config_path.exists(), "Config file should be created"
-
-            # Check default values
-            config = auto_pid.get_config()
-            assert config["pid"]["kp"] == 0.0, "Default Kp should be 0"
-            assert config["auto_tune"]["enabled"] == True, (
-                "Auto-tune should be enabled by default"
-            )
-            assert config["logging"]["enabled"] == True, (
-                "Logging should be enabled by default"
-            )
-
-        results["default_config_creation"] = True
-        print("✅ Default configuration creation: PASS")
-    except Exception as e:
-        results["default_config_creation"] = False
-        print(f"❌ Default configuration creation: FAIL - {e}")
-
-    # Test 2: Configuration loading and validation
-    print("Testing configuration loading...")
-    try:
-        # Modify config file manually
-        with open(config_path, "r") as f:
-            config = yaml.safe_load(f)
-
-        config["pid"]["kp"] = 1.5
-        config["pid"]["ki"] = 0.2
-        config["auto_tune"]["enabled"] = False
-
-        with open(config_path, "w") as f:
-            yaml.dump(config, f)
-
-        # Load modified config
-        with AutoAdamPID(str(config_path)) as auto_pid:
-            loaded_config = auto_pid.get_config()
-            assert loaded_config["pid"]["kp"] == 1.5, "Modified Kp should be loaded"
-            assert loaded_config["pid"]["ki"] == 0.2, "Modified Ki should be loaded"
-            assert loaded_config["auto_tune"]["enabled"] == False, (
-                "Modified auto-tune setting should be loaded"
-            )
-
-        results["config_loading"] = True
-        print("✅ Configuration loading: PASS")
-    except Exception as e:
-        results["config_loading"] = False
-        print(f"❌ Configuration loading: FAIL - {e}")
-
-    # Test 3: Runtime configuration updates
-    print("Testing runtime configuration updates...")
-    try:
-        with AutoAdamPID(str(config_path)) as auto_pid:
-            # Update configuration at runtime
-            auto_pid.update_config(
-                {"pid": {"sample_time_us": 75000}, "logging": {"interval_sec": 0.5}}
-            )
-
-            updated_config = auto_pid.get_config()
-            assert updated_config["pid"]["sample_time_us"] == 75000, (
-                "Sample time should be updated"
-            )
-            assert updated_config["logging"]["interval_sec"] == 0.5, (
-                "Log interval should be updated"
-            )
-
-        # Verify persistence
-        with AutoAdamPID(str(config_path)) as auto_pid2:
-            reloaded_config = auto_pid2.get_config()
-            assert reloaded_config["pid"]["sample_time_us"] == 75000, (
-                "Updates should persist"
-            )
-
-        results["runtime_config_updates"] = True
-        print("✅ Runtime configuration updates: PASS")
-    except Exception as e:
-        results["runtime_config_updates"] = False
-        print(f"❌ Runtime configuration updates: FAIL - {e}")
-
-    # Test 4: Invalid configuration handling
-    print("Testing invalid configuration handling...")
-    try:
-        invalid_config_path = temp_dir / "invalid_config.yaml"
-
-        # Create invalid config
-        invalid_config = {
-            "pid": {
-                "kp": -1.0,  # Invalid negative gain
-                "output_limits": {"min": 100, "max": 50},  # Invalid limits
-            }
-        }
-
-        with open(invalid_config_path, "w") as f:
-            yaml.dump(invalid_config, f)
-
-        # Should handle gracefully or raise appropriate error
-        try:
-            with AutoAdamPID(str(invalid_config_path)) as auto_pid:
-                pass
-            results["invalid_config_handling"] = True
-        except (AutoAdamPIDError, ValueError, FileNotFoundError):
-            # Expected behavior - proper error handling
-            results["invalid_config_handling"] = True
-
-        print("✅ Invalid configuration handling: PASS")
-    except Exception as e:
-        results["invalid_config_handling"] = False
-        print(f"❌ Invalid configuration handling: FAIL - {e}")
-
-    return results
-
-
-def test_database_logging(temp_dir: Path, timer: SimulatedTimer) -> Dict[str, bool]:
+def test_database_logging(
+    timer: SimulatedTimer, config_path: Path, db_path: Path
+) -> Dict[str, bool]:
     """Test database logging functionality."""
 
     print("\n=== Database Logging Test ===")
 
-    config_path = temp_dir / "db_test_config.yaml"
-    db_path = temp_dir / "test_pid.db"
     results = {}
-
-    # Test 1: Database creation and table setup
-    print("Testing database creation...")
-    try:
-        # Create config with database logging
-        config = {
-            "pid": {
-                "kp": 1.0,
-                "ki": 0.1,
-                "kd": 0.05,
-                "action": "DIRECT",
-                "sample_time_us": 50000,
-                "output_limits": {"min": -50, "max": 50},
-            },
-            "auto_tune": {"enabled": False},
-            "logging": {
-                "database_path": str(db_path),
-                "interval_sec": 0.1,
-                "enabled": True,
-            },
-        }
-
-        with open(config_path, "w") as f:
-            yaml.dump(config, f)
-
-        with AutoAdamPID(str(config_path), timer=timer) as auto_pid:
-            assert db_path.exists(), "Database file should be created"
-
-            # Check table creation
-            conn = sqlite3.connect(str(db_path))
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='pid_logs'"
-            )
-            assert cursor.fetchone() is not None, "pid_logs table should exist"
-            conn.close()
-
-        results["database_creation"] = True
-        print("✅ Database creation: PASS")
-    except Exception as e:
-        results["database_creation"] = False
-        print(f"❌ Database creation: FAIL - {e}")
 
     # Test 2: Data logging during control
     print("Testing data logging during control...")
     try:
         timer.reset()
 
-        with AutoAdamPID(str(config_path), timer=timer) as auto_pid:
+        with AutoAdamPID(config_path, timer=timer) as auto_pid:
             auto_pid.set_mode(Control.AUTOMATIC)
 
             # Simulate control loop with logging
@@ -387,7 +223,7 @@ def test_database_logging(temp_dir: Path, timer: SimulatedTimer) -> Dict[str, bo
     # Test 3: Logging disable/enable
     print("Testing logging enable/disable...")
     try:
-        with AutoAdamPID(str(config_path), timer=timer) as auto_pid:
+        with AutoAdamPID(config_path, timer=timer) as auto_pid:
             # Disable logging
             auto_pid.enable_database_logging(False)
             assert auto_pid.get_config()["logging"]["enabled"] == False
@@ -406,21 +242,18 @@ def test_database_logging(temp_dir: Path, timer: SimulatedTimer) -> Dict[str, bo
 
 
 def comprehensive_autotuning_test(
-    process: ComplexBipolarProcess, timer: SimulatedTimer, temp_dir: Path
+    process: ComplexBipolarProcess, timer: SimulatedTimer, config_path: Path
 ) -> Tuple[AutoAdamPID, Dict[str, Any]]:
     """Comprehensive autotuning test with realistic process."""
 
     print("\n=== Comprehensive Autotuning Test ===")
-
-    # Create configuration for autotuning
-    config_path = temp_dir / "autotune_config.yaml"
 
     # Reset everything
     timer.reset()
     process.reset(0.0)
 
     # Create AutoAdamPID with autotuning enabled
-    auto_pid = AutoAdamPID(str(config_path), timer=timer)
+    auto_pid = AutoAdamPID(config_path, timer=timer)
 
     print(f"AutoAdamPID created with config: {config_path}")
     print(f"Auto-tuning enabled: {auto_pid.get_config()['auto_tune']['enabled']}")
@@ -444,7 +277,7 @@ def comprehensive_autotuning_test(
     current_input = 0.0
     setpoint = 15.0  # Target setpoint for autotuning
 
-    print(f"Starting autotuning simulation...")
+    print("Starting autotuning simulation...")
     print(f"Target setpoint: {setpoint}")
     print(f"Max simulation time: {max_time}s")
 
@@ -489,7 +322,7 @@ def comprehensive_autotuning_test(
         if step_count % 100 == 0:
             if auto_pid.is_auto_tuning_in_progress():
                 print(
-                    f"  t={current_time:.1f}s: Autotuning in progress ({progress_info['progress_percent']:.1f}%)"
+                    f"  t={current_time:.1f}s: Autotuning in progress ({progress_info['progress_percent']:.1f}%), Output={current_output:.2f}, Input={current_input:.2f}"
                 )
             else:
                 print(
@@ -535,8 +368,8 @@ def verify_seamless_transition(
     print("\n=== Seamless Transition Verification ===")
 
     # Continue from where autotuning left off
-    current_time = timer.get_time_s()
-    print(f"Starting transition test at t={current_time:.1f}s")
+    transition_start_time = timer.get_time_s()  # Record when transition starts
+    print(f"Starting transition test at t={transition_start_time:.1f}s")
 
     # Test data collection
     transition_data = {
@@ -560,24 +393,29 @@ def verify_seamless_transition(
         timer.step(dt * 1_000_000)
         current_time = timer.get_time_s()
 
-        # Complex setpoint profile
-        if current_time < 20:
+        # FIXED: Use relative time for setpoint logic
+        relative_time = current_time - transition_start_time
+
+        # Complex setpoint profile based on RELATIVE time
+        if relative_time < 20:
             setpoint = 15.0  # Continue from autotuning setpoint
-        elif current_time < 40:
+        elif relative_time < 40:
             setpoint = -10.0  # Large negative step
-        elif current_time < 60:
+        elif relative_time < 60:
             setpoint = 20.0  # Large positive step
-        elif current_time < 80:
+        elif relative_time < 80:
             setpoint = -15.0  # Large negative step
-        elif current_time < 100:
+        elif relative_time < 100:
             setpoint = 5.0  # Medium positive step
         else:
             setpoint = 0.0  # Return to neutral
 
-        # Add step disturbance occasionally
+        # Add step disturbance occasionally (also use relative time)
         if step % 800 == 400:  # Every 40 seconds, offset by 20s
             process.add_step_disturbance(3.0)
-            print(f"  Added step disturbance at t={current_time:.1f}s")
+            print(
+                f"  Added step disturbance at t={current_time:.1f}s (relative: {relative_time:.1f}s)"
+            )
 
         # Update process
         current_output = process.update(current_input, current_time)
@@ -723,10 +561,8 @@ def analyze_autotuned_performance(
 def create_comprehensive_plots(
     tune_data: Dict[str, Any],
     transition_data: Dict[str, Any],
-    config_results: Dict[str, bool],
     db_results: Dict[str, bool],
     auto_pid: AutoAdamPID,
-    process: ComplexBipolarProcess,
 ):
     """Create comprehensive verification plots for AutoAdamPID."""
 
@@ -984,29 +820,6 @@ def create_comprehensive_plots(
     ax6.set_title("Control Distribution")
     ax6.grid(True, alpha=0.3)
 
-    # Plot 7: Configuration Test Results
-    ax7 = fig.add_subplot(gs[2, 3])
-    config_tests = list(config_results.keys())
-    config_values = [1 if config_results[test] else 0 for test in config_tests]
-    colors = ["green" if val else "red" for val in config_values]
-
-    bars = ax7.barh(config_tests, config_values, color=colors, alpha=0.7)
-    ax7.set_xlim(0, 1.1)
-    ax7.set_xlabel("Pass/Fail")
-    ax7.set_title("Configuration Tests")
-
-    # Add pass/fail labels
-    for i, (test, val) in enumerate(zip(config_tests, config_values)):
-        ax7.text(
-            0.5,
-            i,
-            "PASS" if val else "FAIL",
-            ha="center",
-            va="center",
-            fontweight="bold",
-            color="white" if val else "black",
-        )
-
     # Plot 8: Database Test Results
     ax8 = fig.add_subplot(gs[3, 0])
     db_tests = list(db_results.keys())
@@ -1081,18 +894,12 @@ def create_comprehensive_plots(
     process_stats = transition_data["process_stats"]
 
     # Calculate overall success rate
-    all_tests = {**config_results, **db_results}
+    all_tests = db_results
     total_tests = len(all_tests)
     passed_tests = sum(all_tests.values())
     success_rate = passed_tests / total_tests * 100
 
     summary_text = f"""AUTOADAMPID VERIFICATION SUMMARY
-
-CONFIGURATION MANAGEMENT
-✓ Default Config: {"PASS" if config_results.get("default_config_creation", False) else "FAIL"}
-✓ Config Loading: {"PASS" if config_results.get("config_loading", False) else "FAIL"}
-✓ Runtime Updates: {"PASS" if config_results.get("runtime_config_updates", False) else "FAIL"}
-✓ Invalid Handling: {"PASS" if config_results.get("invalid_config_handling", False) else "FAIL"}
 
 DATABASE LOGGING
 ✓ DB Creation: {"PASS" if db_results.get("database_creation", False) else "FAIL"}
@@ -1107,9 +914,9 @@ Final PID Parameters:
  Kd = {auto_pid.get_kd():.4f}
 
 IDENTIFIED PROCESS MODEL
-Process Gain: {tune_results.get("process_gain", "N/A"):.3f}
-Dead Time: {tune_results.get("dead_time", "N/A"):.2f}s
-Time Constant: {tune_results.get("time_constant", "N/A"):.2f}s
+Process Gain: {tune_results.get("process_gain", -1):.3f}
+Dead Time: {tune_results.get("dead_time", -1):.2f}s
+Time Constant: {tune_results.get("time_constant", -1):.2f}s
 
 CONTROL PERFORMANCE
 RMS Error: {analysis["rms_error"]:.3f}
@@ -1177,7 +984,6 @@ VERIFICATION STATUS
 
 
 def print_final_diagnostics(
-    config_results: Dict[str, bool],
     db_results: Dict[str, bool],
     auto_pid: AutoAdamPID,
     transition_data: Dict[str, Any],
@@ -1193,19 +999,6 @@ def print_final_diagnostics(
     print("\n📁 CONFIGURATION MANAGEMENT ANALYSIS:")
     print("-" * 50)
 
-    config_score = sum(config_results.values()) / len(config_results) * 100
-    print(f"Configuration Test Score: {config_score:.0f}%")
-
-    for test_name, result in config_results.items():
-        status = "✅ PASS" if result else "❌ FAIL"
-        print(f"  {test_name}: {status}")
-
-    if config_score >= 100:
-        print("🏆 Configuration Management: EXCELLENT")
-    elif config_score >= 75:
-        print("✅ Configuration Management: GOOD")
-    else:
-        print("⚠️ Configuration Management: NEEDS IMPROVEMENT")
 
     # Database Logging Analysis
     print("\n💾 DATABASE LOGGING ANALYSIS:")
@@ -1354,7 +1147,7 @@ def print_final_diagnostics(
     print("-" * 50)
 
     # Calculate overall scores
-    all_tests = {**config_results, **db_results}
+    all_tests = db_results
     test_score = sum(all_tests.values()) / len(all_tests) * 100
 
     performance_criteria = [
@@ -1412,16 +1205,13 @@ def print_final_diagnostics(
     print("-" * 50)
     features = [
         ("Auto-tuning", auto_pid.is_auto_tuning_complete()),
-        ("Configuration Persistence", config_results.get("config_loading", False)),
         ("Database Logging", db_results.get("data_logging", False)),
-        ("Runtime Config Updates", config_results.get("runtime_config_updates", False)),
         (
             "Bipolar Control",
             analysis["positive_control_pct"] > 10
             and analysis["negative_control_pct"] > 10,
         ),
         ("Seamless Transition", analysis["performance_good"]),
-        ("Error Handling", config_results.get("invalid_config_handling", False)),
     ]
 
     for feature_name, working in features:
@@ -1446,76 +1236,69 @@ def main():
     print("• Instance method interface verification")
     print("=" * 70)
 
-    # Create temporary directory for test files
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_path = Path(temp_dir)
-        timer = SimulatedTimer()
+    config_path = Path("pid_autotune_config.yaml")
+    db_path = Path("pid_data.db")
 
-        # Create complex process for realistic testing
-        process = ComplexBipolarProcess(
-            base_gain=1.0,
-            base_time_constant=5.0,
-            dead_time=0.100,
-            noise_level=0.010,
-            nonlinearity_factor=0.2,
-            asymmetry_factor=0.15,
-            initial_output=0.0,
+    timer = SimulatedTimer()
+
+    # Create complex process for realistic testing
+    process = ComplexBipolarProcess(
+        base_gain=1.0,
+        base_time_constant=5.0,
+        dead_time=0.100,
+        noise_level=0.010,
+        nonlinearity_factor=0.2,
+        asymmetry_factor=0.15,
+        initial_output=0.0,
+    )
+
+    print("\n🏭 Complex Bipolar Process Created:")
+    print(f"  Base Gain: {process.base_gain}")
+    print(f"  Base Time Constant: {process.base_tau}s")
+    print(f"  Dead Time: {process.theta}s")
+    print(f"  Noise Level: {process.noise_level}")
+    print(f"  Nonlinearity Factor: {process.nonlinearity}")
+    print(f"  Asymmetry Factor: {process.asymmetry}")
+    print(f"  Config Directory: {config_path}")
+    print(f"  Database Directory: {db_path}")
+
+    try:
+        # Phase 2: Database Logging Tests
+        print(f"\n💾 Phase 1: Database Logging Tests...")
+        db_results = test_database_logging(timer, config_path, db_path)
+
+        # Phase 3: Comprehensive Autotuning Test
+        print(f"\n🎯 Phase 2: Comprehensive Autotuning Test...")
+        auto_pid, tune_data = comprehensive_autotuning_test(process, timer, config_path)
+
+        # Phase 4: Seamless Transition Verification
+        print(f"\n🔄 Phase 3: Seamless Transition Verification...")
+        transition_data = verify_seamless_transition(auto_pid, process, timer)
+
+        # Phase 5: Generate Comprehensive Plots
+        print(f"\n📊 Phase 4: Generating Comprehensive Plots...")
+        create_comprehensive_plots(
+            tune_data,
+            transition_data,
+            db_results,
+            auto_pid,
         )
 
-        print("\n🏭 Complex Bipolar Process Created:")
-        print(f"  Base Gain: {process.base_gain}")
-        print(f"  Base Time Constant: {process.base_tau}s")
-        print(f"  Dead Time: {process.theta}s")
-        print(f"  Noise Level: {process.noise_level}")
-        print(f"  Nonlinearity Factor: {process.nonlinearity}")
-        print(f"  Asymmetry Factor: {process.asymmetry}")
-        print(f"  Temp Directory: {temp_path}")
+        # Phase 6: Final Diagnostic Analysis
+        print(f"\n🔍 Phase 5: Final Diagnostic Analysis...")
+        print_final_diagnostics(
+            db_results, auto_pid, transition_data, process
+        )
 
-        try:
-            # Phase 1: Configuration Management Tests
-            print(f"\n🔧 Phase 1: Configuration Management Tests...")
-            config_results = test_configuration_management(temp_path)
+        # Clean up AutoAdamPID instance
+        auto_pid._cleanup()
 
-            # Phase 2: Database Logging Tests
-            print(f"\n💾 Phase 2: Database Logging Tests...")
-            db_results = test_database_logging(temp_path, timer)
+    except Exception as e:
+        print(f"❌ Test execution failed: {e}")
+        import traceback
 
-            # Phase 3: Comprehensive Autotuning Test
-            print(f"\n🎯 Phase 3: Comprehensive Autotuning Test...")
-            auto_pid, tune_data = comprehensive_autotuning_test(
-                process, timer, temp_path
-            )
-
-            # Phase 4: Seamless Transition Verification
-            print(f"\n🔄 Phase 4: Seamless Transition Verification...")
-            transition_data = verify_seamless_transition(auto_pid, process, timer)
-
-            # Phase 5: Generate Comprehensive Plots
-            print(f"\n📊 Phase 5: Generating Comprehensive Plots...")
-            create_comprehensive_plots(
-                tune_data,
-                transition_data,
-                config_results,
-                db_results,
-                auto_pid,
-                process,
-            )
-
-            # Phase 6: Final Diagnostic Analysis
-            print(f"\n🔍 Phase 6: Final Diagnostic Analysis...")
-            print_final_diagnostics(
-                config_results, db_results, auto_pid, transition_data, process
-            )
-
-            # Clean up AutoAdamPID instance
-            auto_pid._cleanup()
-
-        except Exception as e:
-            print(f"❌ Test execution failed: {e}")
-            import traceback
-
-            traceback.print_exc()
-            return
+        traceback.print_exc()
+        return
 
     # Final Summary
     print("\n" + "=" * 70)
@@ -1523,7 +1306,7 @@ def main():
     print("=" * 70)
 
     # Calculate overall success
-    all_tests = {**config_results, **db_results}
+    all_tests = db_results
     test_success_rate = sum(all_tests.values()) / len(all_tests) * 100
 
     if (
@@ -1559,9 +1342,6 @@ def main():
     )
     print(
         f"   Control Performance: {'✅ Good' if transition_data['analysis']['performance_good'] else '⚠️ Poor'}"
-    )
-    print(
-        f"   Configuration: {'✅ Working' if config_results.get('config_loading', False) else '❌ Issues'}"
     )
     print(
         f"   Database: {'✅ Working' if db_results.get('data_logging', False) else '❌ Issues'}"

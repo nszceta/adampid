@@ -58,7 +58,7 @@ class AutoAdamPID:
 
     def __init__(
         self,
-        config_path: str,
+        config_path: Path,
         timer: Optional[TimerBase] = None,
     ):
         """
@@ -68,8 +68,8 @@ class AutoAdamPID:
             config_path: Path to YAML configuration file
             timer: Timer implementation for consistent timing
         """
-        self.config_path = Path(config_path)
         self.timer = timer or RealTimeTimer()
+        self.config_path = config_path
 
         # Internal components
         self._pid: Optional[AdamPID] = None
@@ -173,12 +173,12 @@ class AutoAdamPID:
             logger.warning("Input must be set before calling compute()")
             return False
 
-        # CRITICAL FIX: Check if we should start auto-tuning BEFORE running tuning step
+        assert self._setpoint_valid
+
         should_start_tuning = (
             self._should_auto_tune()
             and not self._tuning_in_progress
             and not self._auto_tuning_complete
-            and self._setpoint_valid  # Need setpoint to know where we're going
         )
 
         if should_start_tuning:
@@ -216,10 +216,31 @@ class AutoAdamPID:
         try:
             auto_tune_config = self.config["auto_tune"]
 
+            # FIX 3: Optimize auto-tuning parameters for better process identification
+            # Ensure step size is adequate for identification
+            output_span = auto_tune_config["output_span"]
+            output_start = auto_tune_config["output_start"]
+            output_step = auto_tune_config["output_step"]
+
+            # Increase step size if too small for reliable identification
+            min_step_size = output_span * 0.15  # At least 15% of span
+            if abs(output_step - output_start) < min_step_size:
+                if output_step > output_start:
+                    output_step = output_start + min_step_size
+                else:
+                    output_step = output_start - min_step_size
+
+                # Update config with improved step size
+                auto_tune_config["output_step"] = output_step
+                logger.info(
+                    f"Increased step size to {output_step} for better identification"
+                )
+
             # Parse tuning method and action from config
             tuning_method = TuningMethod[auto_tune_config["tuning_method"]]
             action = TunerAction[auto_tune_config["action"]]
 
+            logger.info(f"STune Tuning Method: {tuning_method}")
             # Create STune instance
             self._s_tune = STune(
                 tuning_method=tuning_method,
@@ -228,12 +249,12 @@ class AutoAdamPID:
                 timer=self.timer,
             )
 
-            # Configure STune parameters
+            # Configure STune parameters (use the optimized step size)
             self._s_tune.configure(
                 input_span=auto_tune_config["input_span"],
                 output_span=auto_tune_config["output_span"],
                 output_start=auto_tune_config["output_start"],
-                output_step=auto_tune_config["output_step"],
+                output_step=output_step,  # Use optimized step size
                 test_time_sec=auto_tune_config["test_time_sec"],
                 settle_time_sec=auto_tune_config["settle_time_sec"],
                 samples=auto_tune_config["samples"],
@@ -242,7 +263,7 @@ class AutoAdamPID:
             # Set emergency stop
             self._s_tune.set_emergency_stop(auto_tune_config["emergency_stop"])
 
-            # CRITICAL FIX: Set current input to STune immediately after configuration
+            # Set current input to STune immediately after configuration
             if self._input_valid:
                 self._s_tune.set_input(self._current_input)
                 logger.info(
@@ -393,6 +414,7 @@ class AutoAdamPID:
                 logger.info(f"Loading existing configuration from {self.config_path}")
                 with open(self.config_path, "r") as f:
                     self.config = yaml.safe_load(f)
+                logger.info("Loaded configuration")
                 self._validate_config()
             else:
                 logger.warning(
@@ -568,6 +590,7 @@ class AutoAdamPID:
 
         # Check if auto-tuning is enabled
         if not auto_tune_config.get("enabled", False):
+            logger.info("Auto tune requested by configuration file")
             return False
 
         # Check if PID parameters are zero (indicating need for tuning)

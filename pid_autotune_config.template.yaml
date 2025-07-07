@@ -11,19 +11,19 @@ auto_tune:
   samples: 600
   settle_time_sec: 10
   test_time_sec: 60
-  tuning_method: COHEN_COON_PID
+  tuning_method: MIXED_PID
 logging:
   database_path: pid_data.db
   interval_sec: 1.0
 pid:
   action: DIRECT
-  d_mode: D_ON_MEAS
-  i_aw_mode: I_AW_CONDITION
+  p_mode: P_ON_ERROR
+  d_mode: D_ON_ERROR
+  i_aw_mode: I_AW_OFF
   kd: 0.0
   ki: 0.0
   kp: 0.0
   output_limits:
     max: 100.0
     min: -100.0
-  p_mode: P_ON_ERROR
   sample_time_us: 100000
