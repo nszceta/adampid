@@ -23,41 +23,12 @@ from typing import List, Tuple, Optional, Dict, Any
 # Set matplotlib to non-interactive backend
 matplotlib.use("Agg")
 
-# Import our AutoAdamPID classes
-try:
-    from adampid import (
-        AutoAdamPID,
-        AutoAdamPIDError,
-        Action,
-        Control,
-        TuningMethod,
-        TunerAction,
-        TunerStatus,
-        SerialMode,
-        SimulatedTimer,
-        DMode,
-        PMode,
-        IAwMode,
-    )
-except ImportError:
-    # Fallback for direct import
-    import sys
-
-    sys.path.append(".")
-    from adampid import (
-        AutoAdamPID,
-        AutoAdamPIDError,
-        Action,
-        Control,
-        TuningMethod,
-        TunerAction,
-        TunerStatus,
-        SerialMode,
-        SimulatedTimer,
-        DMode,
-        PMode,
-        IAwMode,
-    )
+from adampid import (
+    AutoAdamPID,
+    AutoAdamPIDError,
+    Control,
+    SimulatedTimer,
+)
 
 
 class ComplexBipolarProcess:
@@ -945,25 +916,25 @@ def create_comprehensive_plots(
         control_data["times"],
         control_data["p_terms"],
         "r-",
-        linewidth=1.5,
+        linewidth=2.5,
         label="P Term",
-        alpha=0.8,
+        alpha=0.9,
     )
     ax5.plot(
         control_data["times"],
         control_data["i_terms"],
-        "g-",
-        linewidth=1.5,
+        "g--",  # Dashed
+        linewidth=2,
         label="I Term",
-        alpha=0.8,
+        alpha=0.9,
     )
     ax5.plot(
         control_data["times"],
         control_data["d_terms"],
-        "b-",
-        linewidth=1.5,
+        "b:",  # Dotted
+        linewidth=2.5,
         label="D Term",
-        alpha=0.8,
+        alpha=0.9,
     )
 
     total_output = [
@@ -973,7 +944,12 @@ def create_comprehensive_plots(
         )
     ]
     ax5.plot(
-        control_data["times"], total_output, "k-", linewidth=2, label="Total Output"
+        control_data["times"],
+        total_output,
+        "k-",
+        linewidth=3,  # Thicker
+        label="Total Output",
+        alpha=1.0,
     )
     ax5.axhline(y=0, color="gray", linestyle="-", alpha=0.3)
 
@@ -1479,8 +1455,8 @@ def main():
         process = ComplexBipolarProcess(
             base_gain=1.0,
             base_time_constant=5.0,
-            dead_time=0.1,
-            noise_level=0.03,
+            dead_time=0.100,
+            noise_level=0.010,
             nonlinearity_factor=0.2,
             asymmetry_factor=0.15,
             initial_output=0.0,

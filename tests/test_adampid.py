@@ -10,46 +10,25 @@ allowing us to validate the controller's bipolar operation capabilities.
 import matplotlib.pyplot as plt
 import matplotlib
 import numpy as np
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 
 # Set matplotlib to non-interactive backend
 matplotlib.use("Agg")
 
-# Import our PID classes
-try:
-    from adampid import (
-        AdamPID,
-        Action,
-        Control,
-        STune,
-        TuningMethod,
-        TunerAction,
-        TunerStatus,
-        SerialMode,
-        SimulatedTimer,
-        DMode,
-        PMode,
-        IAwMode,
-    )
-except ImportError:
-    # Fallback for direct import
-    import sys
-
-    sys.path.append(".")
-    from adampid import (
-        AdamPID,
-        Action,
-        Control,
-        STune,
-        TuningMethod,
-        TunerAction,
-        TunerStatus,
-        SerialMode,
-        SimulatedTimer,
-        DMode,
-        PMode,
-        IAwMode,
-    )
+from adampid import (
+    AdamPID,
+    Action,
+    Control,
+    STune,
+    TuningMethod,
+    TunerAction,
+    TunerStatus,
+    SerialMode,
+    SimulatedTimer,
+    DMode,
+    PMode,
+    IAwMode,
+)
 
 
 class IdealBipolarProcess:
@@ -187,7 +166,7 @@ class IdealBipolarProcess:
         }
 
 
-def sophisticated_autotuning(
+def my_autotuning(
     process: IdealBipolarProcess, timer: SimulatedTimer
 ) -> Tuple[float, float, float, STune, dict]:
     """
@@ -215,9 +194,9 @@ def sophisticated_autotuning(
 
     # Create STune with optimized settings for the ideal process
     s_tune = STune(
-        tuning_method=TuningMethod.NO_OVERSHOOT_PI,  # Start with mixed method
-        action=TunerAction.DIRECT_IP,  # Inflection point method
-        serial_mode=SerialMode.PRINT_SUMMARY,
+        tuning_method=TuningMethod.MIXED_PID,
+        action=TunerAction.DIRECT_IP,
+        serial_mode=SerialMode.PRINT_ALL,
         timer=timer,
     )
 
@@ -341,16 +320,11 @@ def sophisticated_autotuning(
     print(f"  τ error: {tau_error:.1f}%")
     print(f"  θ error: {theta_error:.1f}%")
 
-    method = TuningMethod.COHEN_COON_PID
-    # method = TuningMethod.ZN_PID
-
-    # Get tunings with optimal method
-    s_tune.set_tuning_method(method)
     kp = s_tune.get_kp()
     ki = s_tune.get_ki()
     kd = s_tune.get_kd()
 
-    print(f"\nOptimal PID Parameters ({method.name}):")
+    print("\nOptimal PID Parameter:")
     print(f"  Kp = {kp:.4f}")
     print(f"  Ki = {ki:.4f}")
     print(f"  Kd = {kd:.4f}")
@@ -391,8 +365,8 @@ def verify_bipolar_control(
         action=Action.DIRECT,
         timer=timer,
         p_mode=PMode.P_ON_ERROR,  # Full proportional response to setpoint changes
-        d_mode=DMode.D_ON_MEAS,  # Reduce derivative kick
-        i_aw_mode=IAwMode.I_AW_OFF,  # I_AW_CONDITION,  # Smart anti-windup
+        d_mode=DMode.D_ON_ERROR,  # Reduce derivative kick
+        i_aw_mode=IAwMode.I_AW_OFF,  # Smart anti-windup
     )
 
     # Set symmetric bipolar limits
@@ -806,6 +780,7 @@ def create_verification_plots(
             tune_data["inputs"],
             "r-",
             linewidth=2,
+            alpha=0.85,
             label="Control Input",
         )
         ax1_twin.axhline(y=0, color="gray", linestyle="-", alpha=0.3)
@@ -847,22 +822,24 @@ def create_verification_plots(
         control_data["times"],
         control_data["setpoints"],
         "k--",
-        linewidth=2,
+        linewidth=3,  # Thicker
         label="Setpoint",
+        alpha=1.0,
     )
     ax2.plot(
         control_data["times"],
         control_data["outputs"],
         "b-",
-        linewidth=2,
+        linewidth=2.5,  # Thicker
         label="Process Output",
+        alpha=0.9,
     )
     ax2_twin = ax2.twinx()
     ax2_twin.plot(
         control_data["times"],
         control_data["inputs"],
         "r-",
-        linewidth=1,
+        linewidth=2,
         alpha=0.8,
         label="Control Input",
     )
@@ -921,25 +898,25 @@ def create_verification_plots(
         control_data["times"],
         control_data["p_terms"],
         "r-",
-        linewidth=1,
+        linewidth=2.5,
         label="P Term",
-        alpha=0.8,
+        alpha=0.9,
     )
     ax4.plot(
         control_data["times"],
         control_data["i_terms"],
-        "g-",
-        linewidth=1,
+        "g--",  # Changed to dashed
+        linewidth=2,
         label="I Term",
-        alpha=0.8,
+        alpha=0.9,
     )
     ax4.plot(
         control_data["times"],
         control_data["d_terms"],
-        "b-",
-        linewidth=1,
+        "b:",  # Changed to dotted
+        linewidth=2.5,
         label="D Term",
-        alpha=0.8,
+        alpha=0.9,
     )
     total_output = [
         p + i + d
@@ -948,7 +925,12 @@ def create_verification_plots(
         )
     ]
     ax4.plot(
-        control_data["times"], total_output, "k-", linewidth=2, label="Total Output"
+        control_data["times"],
+        total_output,
+        "k-",
+        linewidth=3,  # Thicker for emphasis
+        label="Total Output",
+        alpha=1.0,
     )
     ax4.axhline(y=0, color="gray", linestyle="-", alpha=0.3)
     ax4.set_xlabel("Time (s)")
@@ -1398,10 +1380,10 @@ def main():
 
     # Ideal process parameters for clear verification
     process = IdealBipolarProcess(
-        process_gain=0.8,  # Easier to identify accurately
+        process_gain=1.00,  # Easier to identify accurately
         time_constant=5.0,  # Moderate speed
-        dead_time=0.8,  # Better τ/θ ratio
-        noise_level=0.001,  # Very low noise
+        dead_time=1.00,  # Better τ/θ ratio
+        noise_level=0.01,
         initial_output=0.0,
     )
 
@@ -1414,7 +1396,7 @@ def main():
 
     # Phase 1: Sophisticated Autotuning
     print(f"\n🔄 Starting Phase 1: Autotuning...")
-    kp, ki, kd, s_tune, tune_data = sophisticated_autotuning(process, timer)
+    kp, ki, kd, s_tune, tune_data = my_autotuning(process, timer)
 
     if kp == 0:
         print("X Autotuning failed - cannot proceed with verification")

@@ -467,8 +467,10 @@ class STune:
             self.pv_tangent = self.pv_avg - self._tangent.start_val()
 
             if self.sample_count % 100 == 0:  # Every 100 samples
-                print(f"DEBUG: sample={self.sample_count}, pv_avg={self.pv_avg:.4f}, pv_start={self.pv_start:.4f}, pv_tangent={self.pv_tangent:.4f}")
-            
+                print(
+                    f"DEBUG: sample={self.sample_count}, pv_avg={self.pv_avg:.4f}, pv_start={self.pv_start:.4f}, pv_tangent={self.pv_tangent:.4f}"
+                )
+
             # Detect dead time (when response begins)
             self._detect_dead_time()
 
@@ -514,7 +516,7 @@ class STune:
 
     def _detect_inflection_point(self) -> None:
         """Detect the inflection point using tangent slope analysis."""
-        
+
         # EXISTING CODE - keep as is:
         # Check for inflection point based on tangent slope
         ip_count = False
@@ -536,16 +538,20 @@ class STune:
         self.ip_count += 1
 
         # ADD THIS DEBUG OUTPUT:
-        if self.sample_count % 50 == 0 or self.ip_count > 30:  # Every 50 samples or near threshold
-            print(f"DEBUG IP: sample={self.sample_count}, ip_count={self.ip_count}, pv_tangent={self.pv_tangent:.4f}, slope_ip={self.slope_ip:.4f}")
+        if (
+            self.sample_count % 50 == 0 or self.ip_count > 30
+        ):  # Every 50 samples or near threshold
+            print(
+                f"DEBUG IP: sample={self.sample_count}, ip_count={self.ip_count}, pv_tangent={self.pv_tangent:.4f}, slope_ip={self.slope_ip:.4f}"
+            )
 
         # Declare inflection point found after sufficient samples
         ip_threshold = max(1, self._samples // 16)
-        
+
         # ADD DEBUG FOR THRESHOLD:
         if self.ip_count == ip_threshold:
             print(f"DEBUG: Inflection point detected! Threshold={ip_threshold}")
-            
+
         # EXISTING CODE - keep as is:
         if self.ip_count == ip_threshold:
             self.sample_count = self._samples
@@ -554,9 +560,11 @@ class STune:
 
             # Calculate apparent maximum using exponential approximation
             self.pv_max = self.pv_ip + (self.slope_ip * self.K_EXP)
-            
+
             # ADD DEBUG FOR CALCULATION:
-            print(f"DEBUG: pv_ip={self.pv_ip:.4f}, slope_ip={self.slope_ip:.4f}, K_EXP={self.K_EXP:.4f}")
+            print(
+                f"DEBUG: pv_ip={self.pv_ip:.4f}, slope_ip={self.slope_ip:.4f}, K_EXP={self.K_EXP:.4f}"
+            )
             print(f"DEBUG: Calculated pv_max={self.pv_max:.4f}")
 
             # Calculate time constant from tangent crossing points
@@ -603,70 +611,60 @@ class STune:
     """
 
     def _complete_tuning(self) -> None:
-        """Complete the tuning calculation and compute PID parameters - FIXED VERSION."""
+        """Complete the tuning calculation and compute PID parameters - IMPROVED VERSION."""
 
         pv_change = abs(self.pv_max - self.pv_start)
         output_change = abs(self._output_step - self._output_start)
 
         if self._serial_mode != SerialMode.PRINT_OFF:
             print(f"DEBUG: pv_start={self.pv_start:.3f}, pv_max={self.pv_max:.3f}")
-            print(f"DEBUG: pv_change={pv_change:.3f}, output_change={output_change:.3f}")
+            print(
+                f"DEBUG: pv_change={pv_change:.3f}, output_change={output_change:.3f}"
+            )
             print(f"DEBUG: Expected response ~{output_change * 0.8:.1f}")
 
-        # More reasonable validation thresholds
+        # Validation thresholds
         min_response = output_change * 0.05  # At least 5% of step size response
         if pv_change < min_response:
-            raise TuningError(f"Insufficient process response: {pv_change:.3f} < {min_response:.3f}")
-            
+            raise TuningError(
+                f"Insufficient process response: {pv_change:.3f} < {min_response:.3f}"
+            )
+
         if output_change < 1.0:
             raise TuningError(f"Step size too small: {output_change:.3f}")
-            
+
         self._ku = pv_change / output_change
 
-        # CRITICAL FIX: Remove the incorrect time constant recalculation
-        # The time constant (_tu) is already correctly calculated in _detect_inflection_point()
-        # to match the C++ implementation. Don't override it here.
-        
-        # REMOVED PROBLEMATIC CODE:
-        # if self._action in [TunerAction.DIRECT_IP, TunerAction.REVERSE_IP]:
-        #     if abs(self.slope_ip) > self.EPSILON:
-        #         time_to_max = (self.pv_max - self.pv_ip) / abs(self.slope_ip)  # WRONG!
-        #         self._tu = time_to_max * self._tangent_period_us * 1e-6        # WRONG!
+        # Time constant calculation for inflection point method
+        if self._action in [TunerAction.DIRECT_IP, TunerAction.REVERSE_IP]:
+            # More robust time constant calculation
+            if abs(self.slope_ip) > self.EPSILON:
+                # Time from inflection point to apparent maximum
+                time_to_max = (self.pv_max - self.pv_ip) / abs(self.slope_ip)
+                # Convert buffer periods to actual time
+                self._tu = time_to_max * self._tangent_period_us * 1e-6
+            else:
+                # Fallback: estimate from response time
+                self._tu = self.ip_us * 1e-6 * 0.63  # Approximate time constant
 
-        # Fix 3: Better dead time ratio calculation
+        # Dead time ratio calculation
         if self._tu > 0:
             self._r = self._td / self._tu
         else:
             self._r = 0.1  # Default safe ratio
 
-        # Fix 4: Validate identified parameters
+        # Validate identified parameters
         if self._ku <= 0 or self._tu <= 0:
             raise TuningError(
                 f"Invalid identified parameters: Ku={self._ku}, Tu={self._tu}"
             )
 
-        # Fix 5: Select better tuning method based on process characteristics
-        controllability = self._tu / (self._td + 0.001)  # Avoid division by zero
-
-        if controllability > 4:  # Moderate
-            recommended_method = TuningMethod.COHEN_COON_PID
-        else:  # Difficult
-            recommended_method = TuningMethod.ZN_PID
-
-        # Override tuning method if current one is not suitable
-        if self._tuning_method != recommended_method:
-            if self._serial_mode != SerialMode.PRINT_OFF:
-                print(
-                    f"Switching tuning method from {self._tuning_method.name} to {recommended_method.name}"
-                )
-            self._tuning_method = recommended_method
-
-        # Calculate PID parameters with improved method
+        # Calculate PID parameters
         self._kp = self.get_kp()
         self._ki = self.get_ki()
         self._kd = self.get_kd()
 
-        # Fix 6: Validate and constrain PID parameters
+        # Validate and constrain PID parameters
         if self._kp <= 0:
             self._kp = 1.0 / self._ku if self._ku > 0 else 1.0
 
@@ -685,18 +683,6 @@ class STune:
 
         # Print results
         self._print_results()
-
-    # Summary of the fix:
-    # 
-    # BEFORE: Time constant calculated correctly in _detect_inflection_point(), 
-    #         then incorrectly recalculated in _complete_tuning()
-    # 
-    # AFTER:  Time constant calculated correctly in _detect_inflection_point(),
-    #         and preserved in _complete_tuning()
-    #
-    # This ensures the Python implementation matches the C++ algorithm exactly,
-    # which should dramatically improve process identification accuracy and 
-    # subsequent PID control performance.
 
     def _run_pid_phase(self, us_now: float, us_elapsed: float) -> TunerStatus:
         """Handle PID execution phase (post-tuning)."""
