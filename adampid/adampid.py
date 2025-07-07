@@ -49,7 +49,7 @@ class IAwMode(IntEnum):
     """Integral anti-windup modes."""
 
     I_AW_CONDITION = 0  # Conditional integration (default)
-    I_AW_CLAMP = 1  # Clamp output after integration
+    I_AW_CLAMP = 1  # FIXME: Clamp output after integration
     I_AW_OFF = 2  # No anti-windup protection
 
 

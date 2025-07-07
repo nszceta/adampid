@@ -194,7 +194,7 @@ def my_autotuning(
 
     # Create STune with optimized settings for the ideal process
     s_tune = STune(
-        tuning_method=TuningMethod.MIXED_PID,
+        tuning_method=TuningMethod.ZN_PID,
         action=TunerAction.DIRECT_IP,
         serial_mode=SerialMode.PRINT_ALL,
         timer=timer,
@@ -364,9 +364,9 @@ def verify_bipolar_control(
         kd=kd,
         action=Action.DIRECT,
         timer=timer,
-        p_mode=PMode.P_ON_ERROR,  # Full proportional response to setpoint changes
-        d_mode=DMode.D_ON_ERROR,  # Reduce derivative kick
-        i_aw_mode=IAwMode.I_AW_OFF,  # Smart anti-windup
+        p_mode=PMode.P_ON_ERROR,
+        d_mode=DMode.D_ON_ERROR,
+        i_aw_mode=IAwMode.I_AW_OFF,
     )
 
     # Set symmetric bipolar limits

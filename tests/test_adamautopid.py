@@ -999,7 +999,6 @@ def print_final_diagnostics(
     print("\n📁 CONFIGURATION MANAGEMENT ANALYSIS:")
     print("-" * 50)
 
-
     # Database Logging Analysis
     print("\n💾 DATABASE LOGGING ANALYSIS:")
     print("-" * 50)
@@ -1286,9 +1285,7 @@ def main():
 
         # Phase 6: Final Diagnostic Analysis
         print(f"\n🔍 Phase 5: Final Diagnostic Analysis...")
-        print_final_diagnostics(
-            db_results, auto_pid, transition_data, process
-        )
+        print_final_diagnostics(db_results, auto_pid, transition_data, process)
 
         # Clean up AutoAdamPID instance
         auto_pid._cleanup()
