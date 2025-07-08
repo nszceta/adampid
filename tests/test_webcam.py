@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Webcam Control with PID Brightness Control
-Properly encapsulated design following SOLID principles
+Automatic scene brightness control using camera brightness adjustment
 """
 
 import cv2
@@ -13,11 +13,11 @@ from typing import Dict, Tuple, Optional, Callable
 import time
 
 # Assume AdamPID is available as specified
-from adampid import AdamPID, Action, Control, SimulatedTimer
+from adampid import AdamPID, Action, Control, RealTimeTimer
 
 
 class BrightnessMethod(Enum):
-    """Available brightness measurement methods"""
+    """Available scene brightness measurement methods"""
     MEAN = "mean"
     MEDIAN = "median"
     TRIMMED_MEAN = "trimmed_mean"  # Best for outliers + speed
@@ -47,33 +47,33 @@ class CameraProperty:
 @dataclass
 class DiagnosticData:
     """All diagnostic information for display"""
-    target_brightness: float
-    current_brightness: float
+    target_scene_brightness: float
+    measured_scene_brightness: float
     brightness_error: float
     pid_enabled: bool
-    pid_output: float
+    camera_brightness_output: float
     p_term: float
     i_term: float
     d_term: float
     kp_gain: float
     ki_gain: float
     kd_gain: float
-    control_properties: Dict[str, float]
+    camera_brightness_setting: float
     fps: float
     frame_count: int
 
 
 class IBrightnessAnalyzer(ABC):
-    """Interface for brightness measurement strategies"""
+    """Interface for scene brightness measurement strategies"""
     
     @abstractmethod
-    def measure_brightness(self, frame: np.ndarray) -> float:
+    def measure_scene_brightness(self, frame: np.ndarray) -> float:
         """Measure scene brightness from frame"""
         pass
 
 
 class BrightnessAnalyzer(IBrightnessAnalyzer):
-    """Fast brightness analysis with outlier resistance"""
+    """Fast scene brightness analysis with outlier resistance"""
     
     def __init__(self, method: BrightnessMethod = BrightnessMethod.TRIMMED_MEAN, 
                  downsample_factor: int = 4):
@@ -93,8 +93,8 @@ class BrightnessAnalyzer(IBrightnessAnalyzer):
         }
         return method_map[self.method]
     
-    def measure_brightness(self, frame: np.ndarray) -> float:
-        """Fast brightness measurement with downsampling"""
+    def measure_scene_brightness(self, frame: np.ndarray) -> float:
+        """Fast scene brightness measurement with downsampling"""
         # Fast downsample for speed
         small_frame = frame[::self.downsample_factor, ::self.downsample_factor]
         
@@ -129,12 +129,12 @@ class BrightnessAnalyzer(IBrightnessAnalyzer):
 
 
 class CameraManager:
-    """Manages camera operations and properties"""
+    """Manages camera operations and brightness property"""
     
     def __init__(self, camera_id: int = 0):
         self.camera_id = camera_id
         self.cap: Optional[cv2.VideoCapture] = None
-        self.supported_properties: Dict[str, CameraProperty] = {}
+        self.brightness_property: Optional[CameraProperty] = None
         self._initialize_camera()
     
     def _initialize_camera(self) -> None:
@@ -156,31 +156,22 @@ class CameraManager:
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         
-        self._discover_properties()
+        self._discover_brightness_property()
     
-    def _discover_properties(self) -> None:
-        """Discover and catalog supported camera properties"""
-        property_definitions = {
-            'BRIGHTNESS': cv2.CAP_PROP_BRIGHTNESS,
-            'CONTRAST': cv2.CAP_PROP_CONTRAST,
-            'SATURATION': cv2.CAP_PROP_SATURATION,
-            'HUE': cv2.CAP_PROP_HUE,
-            'GAIN': cv2.CAP_PROP_GAIN,
-            'EXPOSURE': cv2.CAP_PROP_EXPOSURE,
-            'GAMMA': cv2.CAP_PROP_GAMMA,
-        }
-        
-        for name, cv_prop in property_definitions.items():
-            try:
-                value = self.cap.get(cv_prop)
-                if value != -1:  # -1 means unsupported
-                    self.supported_properties[name] = CameraProperty(
-                        name=name,
-                        cv_property=cv_prop,
-                        value=value
-                    )
-            except Exception:
-                pass
+    def _discover_brightness_property(self) -> None:
+        """Discover and check camera brightness property support"""
+        try:
+            value = self.cap.get(cv2.CAP_PROP_BRIGHTNESS)
+            if value != -1:  # -1 means unsupported
+                self.brightness_property = CameraProperty(
+                    name='BRIGHTNESS',
+                    cv_property=cv2.CAP_PROP_BRIGHTNESS,
+                    value=value
+                )
+            else:
+                raise RuntimeError("Camera does not support brightness control")
+        except Exception as e:
+            raise RuntimeError(f"Could not access camera brightness property: {e}")
     
     def get_frame(self) -> Optional[np.ndarray]:
         """Capture a frame from camera"""
@@ -190,22 +181,21 @@ class CameraManager:
         ret, frame = self.cap.read()
         return frame if ret else None
     
-    def set_property(self, property_name: str, value: float) -> bool:
-        """Set camera property value"""
-        if property_name not in self.supported_properties:
+    def set_camera_brightness(self, value: float) -> bool:
+        """Set camera brightness value (0-255)"""
+        if not self.brightness_property:
             return False
         
-        prop = self.supported_properties[property_name]
-        success = self.cap.set(prop.cv_property, value)
+        success = self.cap.set(self.brightness_property.cv_property, value)
         if success:
-            prop.value = self.cap.get(prop.cv_property)  # Get actual set value
+            self.brightness_property.value = self.cap.get(self.brightness_property.cv_property)
         return success
     
-    def get_property(self, property_name: str) -> Optional[float]:
-        """Get current camera property value"""
-        if property_name not in self.supported_properties:
+    def get_camera_brightness(self) -> Optional[float]:
+        """Get current camera brightness setting"""
+        if not self.brightness_property:
             return None
-        return self.supported_properties[property_name].value
+        return self.brightness_property.value
     
     def get_resolution(self) -> Tuple[int, int]:
         """Get current camera resolution"""
@@ -223,7 +213,7 @@ class CameraManager:
 
 
 class BrightnessPIDController:
-    """PID controller for automatic brightness control"""
+    """PID controller for automatic scene brightness control via camera brightness adjustment"""
     
     def __init__(self, camera_manager: CameraManager, 
                 brightness_analyzer: IBrightnessAnalyzer,
@@ -234,8 +224,8 @@ class BrightnessPIDController:
         
         # PID state
         self.enabled = False
-        self.target_brightness = 128.0  # Default mid-range
-        self.current_brightness = 0.0
+        self.target_scene_brightness = 128.0  # Default mid-range target
+        self.measured_scene_brightness = 0.0
         self.error = 0.0
         
         # Frame counting for update frequency
@@ -243,7 +233,7 @@ class BrightnessPIDController:
         self.frame_count = 0
         
         # AdamPID setup
-        self.timer = SimulatedTimer()
+        self.timer = RealTimeTimer()
         self.pid = AdamPID(
             kp=self.params.kp,
             ki=self.params.ki,
@@ -257,7 +247,7 @@ class BrightnessPIDController:
         self.pid.set_sample_time_us(100_000)  # 100ms
         
         # Initialize setpoint and input to prevent compute() error
-        self.pid.set_setpoint(self.target_brightness)
+        self.pid.set_setpoint(self.target_scene_brightness)
         self.pid.set_input(128.0)  # Initialize with mid-range value
     
     def set_enabled(self, enabled: bool) -> None:
@@ -265,14 +255,13 @@ class BrightnessPIDController:
         self.enabled = enabled
         if enabled:
             self.pid.set_mode(Control.AUTOMATIC)
-            # PID will initialize its own output appropriately
         else:
             self.pid.set_mode(Control.MANUAL)
     
-    def set_target_brightness(self, target: float) -> None:
-        """Set target brightness (0-255)"""
-        self.target_brightness = np.clip(target, 0.0, 255.0)
-        self.pid.set_setpoint(self.target_brightness)
+    def set_target_scene_brightness(self, target: float) -> None:
+        """Set target scene brightness (0-255)"""
+        self.target_scene_brightness = np.clip(target, 0.0, 255.0)
+        self.pid.set_setpoint(self.target_scene_brightness)
     
     def update_pid_params(self, kp: float = None, ki: float = None, kd: float = None) -> None:
         """Update PID parameters"""
@@ -294,39 +283,37 @@ class BrightnessPIDController:
         if self.frame_count % self.update_interval != 0:
             return
         
-        # Measure current brightness
-        self.current_brightness = self.brightness_analyzer.measure_brightness(frame)
-        self.error = self.target_brightness - self.current_brightness
+        # Measure current scene brightness
+        self.measured_scene_brightness = self.brightness_analyzer.measure_scene_brightness(frame)
+        self.error = self.target_scene_brightness - self.measured_scene_brightness
         
         if not self.enabled:
             return
-        
-        # Advance timer for PID
-        self.timer.step(100_000)  # 100ms step
-        
+
         # Update PID
-        self.pid.set_input(self.current_brightness)
+        self.pid.set_input(self.measured_scene_brightness)
         
         if self.pid.compute():
-            output = self.pid.get_output()
-            # Apply to camera
-            self.camera_manager.set_property('BRIGHTNESS', output)
+            camera_brightness_output = self.pid.get_output()
+            # Apply camera brightness setting
+            self.camera_manager.set_camera_brightness(camera_brightness_output)
     
     def get_diagnostic_data(self) -> Dict[str, float]:
         """Get PID diagnostic information"""
         return {
-            'target_brightness': self.target_brightness,
-            'current_brightness': self.current_brightness,
+            'target_scene_brightness': self.target_scene_brightness,
+            'measured_scene_brightness': self.measured_scene_brightness,
             'error': self.error,
             'p_term': self.pid.get_p_term(),
             'i_term': self.pid.get_i_term(),
             'd_term': self.pid.get_d_term(),
-            'output': self.pid.get_output(),
+            'camera_brightness_output': self.pid.get_output(),
             'enabled': self.enabled,
-            'kp_gain': self.params.kp,  # Add this line
-            'ki_gain': self.params.ki,  # Add this line
-            'kd_gain': self.params.kd   # Add this line
+            'kp_gain': self.params.kp,
+            'ki_gain': self.params.ki,
+            'kd_gain': self.params.kd
         }
+
 
 class DiagnosticsRenderer:
     """Renders diagnostic information on frames"""
@@ -339,48 +326,35 @@ class DiagnosticsRenderer:
         self.bg_color = (0, 0, 0)  # Black background
     
     def render_diagnostics(self, frame: np.ndarray, data: DiagnosticData) -> np.ndarray:
-        """Render all diagnostic information on frame with high fidelity"""
+        """Render all diagnostic information on frame"""
         height, width = frame.shape[:2]
         
-        # Much better font scaling for high fidelity
         font_scale = 0.50
         thickness = 1
         
         # Create diagnostic text
         diagnostics = [
             f"PID Control: {'ON' if data.pid_enabled else 'OFF'}",
-            f"Target Brightness: {data.target_brightness:.1f}",
-            f"Current Brightness: {data.current_brightness:.1f}",
+            f"Target Scene Brightness: {data.target_scene_brightness:.1f}",
+            f"Measured Scene Brightness: {data.measured_scene_brightness:.1f}",
             f"Error: {data.brightness_error:+.1f}",
-            f"PID Output: {data.pid_output:.1f}",
+            f"Camera Brightness Output: {data.camera_brightness_output:.1f}",
+            f"Camera Brightness Setting: {data.camera_brightness_setting:.1f}",
             f"P: {data.p_term:.2f} | I: {data.i_term:.2f} | D: {data.d_term:.2f}",
-            f"Gains - Kp: {data.kp_gain:.3f} | Ki: {data.ki_gain:.3f} | Kd: {data.kd_gain:.3f}",  # Add this line
+            f"Gains - Kp: {data.kp_gain:.3f} | Ki: {data.ki_gain:.3f} | Kd: {data.kd_gain:.3f}",
             f"FPS: {data.fps:.1f} | Frame: {data.frame_count}",
             "",
-            "Camera Properties:",
-        ]
-        
-        # Add camera properties
-        for prop_name, value in data.control_properties.items():
-            diagnostics.append(f"  {prop_name}: {value:.2f}")
-        
-        # Add controls
-        diagnostics.extend([
-            "",
             "Controls:",
-            "P/L - PID On/Off  | +/- Target Brightness",
-            "1/2/3 - Adjust Kp | 4/5/6 - Adjust Ki | 7/8/9 - Adjust Kd",
-            "Q/A - Brightness  | W/S - Contrast | E/D - Saturation",
-            "R/F - Hue | T/G - Gamma | Y/H - Gain | U/J - Exposure",
-            "SPACE - Reset | ESC - Exit"
-        ])
+            "P/L - PID On/Off  | +/- Target Scene Brightness",
+            "1/2 - Adjust Kp | 4/5 - Adjust Ki | 7/8 - Adjust Kd",
+            "ESC - Exit"
+        ]
         
         # Create overlay for transparency
         overlay = frame.copy()
         
-        # Better spacing and positioning
         y_offset = int(35 * font_scale)
-        line_height = int(35 * font_scale)  # Much more generous spacing
+        line_height = int(35 * font_scale)
         padding = int(15 * font_scale)
         
         # Calculate total text area for background
@@ -401,20 +375,20 @@ class DiagnosticsRenderer:
                     (max_width + padding * 3, total_height + padding),
                     self.bg_color, -1)
         
-        # Apply transparency (30% background, 70% original)
+        # Apply transparency
         alpha = 0.3
         cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
         
         # Reset y_offset for text rendering
         y_offset = int(35 * font_scale) + padding
         
-        # Render high-quality text
+        # Render text
         for text in diagnostics:
             if text:  # Skip empty lines
                 cv2.putText(frame, text, 
                         (padding * 2, y_offset), 
                         self.font, font_scale, self.color, thickness,
-                        lineType=cv2.LINE_AA)  # Anti-aliased text for quality
+                        lineType=cv2.LINE_AA)
             
             y_offset += line_height
         
@@ -422,28 +396,18 @@ class DiagnosticsRenderer:
 
 
 class InputManager:
-    """Handles keyboard input and control logic"""
+    """Handles keyboard input for PID brightness control"""
     
     def __init__(self, camera_manager: CameraManager, 
                  pid_controller: BrightnessPIDController):
         self.camera_manager = camera_manager
         self.pid_controller = pid_controller
         
-        # Control mappings
-        self.property_controls = {
-            'q': ('BRIGHTNESS', 1),   'a': ('BRIGHTNESS', -1),
-            'w': ('CONTRAST', 0.05),  's': ('CONTRAST', -0.05),
-            'e': ('SATURATION', 0.05), 'd': ('SATURATION', -0.05),
-            'r': ('HUE', 1),          'f': ('HUE', -1),
-            't': ('GAMMA', 0.05),     'g': ('GAMMA', -0.05),
-            'y': ('GAIN', 1),         'h': ('GAIN', -1),
-            'u': ('EXPOSURE', 1),     'j': ('EXPOSURE', -1),
-        }
-        
+        # PID parameter controls only
         self.pid_controls = {
-            '1': ('kp', 0.005),   '2': ('kp', -0.005),
-            '4': ('ki', 0.005),  '5': ('ki', -0.005),
-            '7': ('kd', 0.005),  '8': ('kd', -0.005),
+            '1': ('kp', -0.005),   '2': ('kp', 0.005),
+            '4': ('ki', -0.005),  '5': ('ki', 0.005),
+            '7': ('kd', -0.005),  '8': ('kd', 0.005),
         }
     
     def handle_input(self, key: int) -> bool:
@@ -457,49 +421,26 @@ class InputManager:
         if key == 27:  # ESC
             return False
         
-        # Reset
-        elif key == 32:  # SPACE
-            self._reset_properties()
-        
         # PID control toggle
         elif char == 'p':
             self.pid_controller.set_enabled(True)
         elif char == 'l':
             self.pid_controller.set_enabled(False)
         
-        # Target brightness adjustment
+        # Target scene brightness adjustment
         elif char == '=':  # Plus key
-            current_target = self.pid_controller.target_brightness
-            self.pid_controller.set_target_brightness(current_target + 10)
+            current_target = self.pid_controller.target_scene_brightness
+            self.pid_controller.set_target_scene_brightness(current_target + 10)
         elif char == '-':  # Minus key
-            current_target = self.pid_controller.target_brightness
-            self.pid_controller.set_target_brightness(current_target - 10)
-        
-        # Camera property controls
-        elif char in self.property_controls:
-            prop_name, step = self.property_controls[char]
-            self._adjust_property(prop_name, step)
+            current_target = self.pid_controller.target_scene_brightness
+            self.pid_controller.set_target_scene_brightness(current_target - 10)
         
         # PID parameter controls
         elif char in self.pid_controls:
             param_name, step = self.pid_controls[char]
             self._adjust_pid_param(param_name, step)
         
-        # Brightness method cycling (3 key cycles methods)
-        elif char == '3':
-            self._cycle_brightness_method()
-        
         return True
-    
-    def _adjust_property(self, prop_name: str, step: float) -> None:
-        """Adjust camera property by step amount"""
-        if prop_name not in self.camera_manager.supported_properties:
-            return
-        
-        current = self.camera_manager.get_property(prop_name)
-        if current is not None:
-            new_value = current + step
-            self.camera_manager.set_property(prop_name, new_value)
     
     def _adjust_pid_param(self, param_name: str, step: float) -> None:
         """Adjust PID parameter by step amount"""
@@ -517,29 +458,10 @@ class InputManager:
             self.pid_controller.update_pid_params(ki=new_value)
         elif param_name == 'kd':
             self.pid_controller.update_pid_params(kd=new_value)
-    
-    def _reset_properties(self) -> None:
-        """Reset all properties to defaults"""
-        defaults = {
-            'BRIGHTNESS': 128,
-            'CONTRAST': 1.0,
-            'SATURATION': 1.0,
-            'HUE': 0.0,
-            'GAMMA': 1.0,
-        }
-        
-        for prop_name, default_val in defaults.items():
-            self.camera_manager.set_property(prop_name, default_val)
-    
-    def _cycle_brightness_method(self) -> None:
-        """Cycle through brightness measurement methods"""
-        # This would require analyzer to support method switching
-        # Implementation depends on making BrightnessAnalyzer method switchable
-        pass
 
 
 class WebcamControlApplication:
-    """Main application class coordinating all components"""
+    """Main application class for PID brightness control"""
     
     def __init__(self, camera_id: int = 0):
         # Initialize components following dependency injection
@@ -578,18 +500,20 @@ class WebcamControlApplication:
     
     def run(self) -> None:
         """Main application loop"""
-        print("WebCam Control with PID Brightness Control")
-        print("==========================================")
+        print("WebCam PID Brightness Control")
+        print("=============================")
+        print("Automatic scene brightness control via camera brightness adjustment")
+        print("")
         print("Controls:")
         print("  P/L - Enable/Disable PID Control")
-        print("  +/- - Adjust Target Brightness")
+        print("  +/- - Adjust Target Scene Brightness")
         print("  1/2 - Adjust Kp | 4/5 - Adjust Ki | 7/8 - Adjust Kd")
-        print("  ESC - Exit | SPACE - Reset Properties")
+        print("  ESC - Exit")
         print()
         
         # Create window
-        cv2.namedWindow('Webcam PID Control', cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('Webcam PID Control', 1200, 800)
+        cv2.namedWindow('Webcam PID Brightness Control', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('Webcam PID Brightness Control', 1200, 800)
         
         self.running = True
         
@@ -608,22 +532,21 @@ class WebcamControlApplication:
                 
                 # Gather diagnostic data
                 pid_data = self.pid_controller.get_diagnostic_data()
+                camera_brightness = self.camera_manager.get_camera_brightness() or 0.0
+                
                 diagnostic_data = DiagnosticData(
-                    target_brightness=pid_data['target_brightness'],
-                    current_brightness=pid_data['current_brightness'],
+                    target_scene_brightness=pid_data['target_scene_brightness'],
+                    measured_scene_brightness=pid_data['measured_scene_brightness'],
                     brightness_error=pid_data['error'],
                     pid_enabled=pid_data['enabled'],
-                    pid_output=pid_data['output'],
+                    camera_brightness_output=pid_data['camera_brightness_output'],
                     p_term=pid_data['p_term'],
                     i_term=pid_data['i_term'],
                     d_term=pid_data['d_term'],
-                    kp_gain=pid_data['kp_gain'],  # Add this line
-                    ki_gain=pid_data['ki_gain'],  # Add this line
-                    kd_gain=pid_data['kd_gain'],  # Add this line
-                    control_properties={
-                        name: prop.value 
-                        for name, prop in self.camera_manager.supported_properties.items()
-                    },
+                    kp_gain=pid_data['kp_gain'],
+                    ki_gain=pid_data['ki_gain'],
+                    kd_gain=pid_data['kd_gain'],
+                    camera_brightness_setting=camera_brightness,
                     fps=fps,
                     frame_count=self.frame_count
                 )
@@ -634,7 +557,7 @@ class WebcamControlApplication:
                 )
                 
                 # Show frame
-                cv2.imshow('Webcam PID Control', display_frame)
+                cv2.imshow('Webcam PID Brightness Control', display_frame)
                 
                 # Handle input
                 key = cv2.waitKey(1) & 0xFF
