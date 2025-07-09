@@ -78,8 +78,8 @@ class AdamPID:
         ki: float = 0.0,
         kd: float = 0.0,
         p_mode: PMode = PMode.P_ON_ERROR,
-        d_mode: DMode = DMode.D_ON_MEAS,
-        i_aw_mode: IAwMode = IAwMode.I_AW_CONDITION,
+        d_mode: DMode = DMode.D_ON_ERROR,
+        i_aw_mode: IAwMode = IAwMode.I_AW_OFF,
         action: Action = Action.DIRECT,
         timer: Optional[TimerBase] = None,
     ):
